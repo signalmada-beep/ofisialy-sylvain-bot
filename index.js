@@ -95,22 +95,31 @@ function getFollowMessage(lang, type) {
             en: `🎉 *Welcome to Ofisialy Sylvain!*\n\nWe're happy to have you here! 😊\n\n📌 *Follow our page* for daily free tips and exercises.\n\n👍 *Like, comment, share* — your support helps us reach more learners!\n\n🚀 Let's start! How can I help you?`,
             other: `🎉 *Welcome / Bienvenue !*\n\n📌 *Follow / Abonnez-vous* à Ofisialy Sylvain pour apprendre le Français et l'Anglais !\n\n👍 *Like, comment, share / Likez, commentez, partagez* — votre soutien compte ! 🚀`
         },
+        'share': {
+            fr: `🌟 *Aidez-nous à grandir !*\n\nPartagez cette page avec 3 amis qui veulent apprendre le Français ou l'Anglais.\n\n📌 Suivez @OfisialySylvain\n🔄 Partagez ce message\n👍 Likez notre page\n\nMerci pour votre soutien ! 🙏`,
+            en: `🌟 *Help us grow!*\n\nShare this page with 3 friends who want to learn French or English.\n\n📌 Follow @OfisialySylvain\n🔄 Share this message\n👍 Like our page\n\nThanks for your support! 🙏`,
+            other: `🌟 *Help us grow / Aidez-nous à grandir !*\n\n📌 Follow / Suivez @OfisialySylvain\n🔄 Share / Partagez\n👍 Like / Likez\n\nThanks / Merci ! 🙏`
+        },
         'thankyou': {
             fr: `🙏 *Merci pour votre visite !*\n\nSi notre assistance vous a été utile :\n👍 *Likez* la page\n💬 *Commentez* pour nous encourager\n🔄 *Partagez* avec vos amis\n📌 *Abonnez-vous* pour rester informé(e)\n\nÀ bientôt ! 😊`,
             en: `🙏 *Thank you for visiting!*\n\nIf our help was useful:\n👍 *Like* our page\n💬 *Comment* to encourage us\n🔄 *Share* with your friends\n📌 *Follow* to stay updated\n\nSee you soon! 😊`,
             other: `🙏 *Thank you / Merci !*\n\n👍 *Like / Likez* | 💬 *Comment / Commentez* | 🔄 *Share / Partagez* | 📌 *Follow / Abonnez-vous*\n\nSee you soon / À bientôt ! 😊`
         },
         'reminder': {
-            fr: `⏰ *Vous nous manquez !*\n\nCela fait 30 minutes que nous n'avons pas eu de vos nouvelles. 😢\n\n📌 *N'oubliez pas de vous abonner* pour recevoir nos exercices quotidiens !\n\n👍 *Likez, commentez, partagez* — votre soutien nous aide à grandir !\n\n🚀 Revenez quand vous voulez — nous sommes là 24h/24 !`,
-            en: `⏰ *We miss you!*\n\nIt's been 30 minutes since we last heard from you. 😢\n\n📌 *Don't forget to follow us* for daily exercises!\n\n👍 *Like, comment, share* — your support helps us grow!\n\n🚀 Come back anytime — we're here 24/7!`,
-            other: `⏰ *You miss us? / Nous vous manquons?*\n\n📌 *Follow / Abonnez-vous* pour continuer à apprendre !\n\n👍 *Like, comment, share / Likez, commentez, partagez* 🚀`
+            fr: `📌 *Rappel amical !*\n\nCela fait un moment que nous n'avons pas échangé. 😊\n\nSi notre page vous plaît :\n👍 *Likez* pour nous soutenir\n💬 *Commentez* pour donner votre avis\n🔄 *Partagez* avec 3 amis qui apprennent le Français ou l'Anglais\n📌 *Abonnez-vous* pour ne rien manquer\n\n🚀 Revenez quand vous voulez — nous sommes là 24h/24 !`,
+            en: `📌 *Friendly reminder!*\n\nIt's been a while since we last chatted. 😊\n\nIf you like our page:\n👍 *Like* to support us\n💬 *Comment* to share your thoughts\n🔄 *Share* with 3 friends learning French or English\n📌 *Follow* to stay updated\n\n🚀 Come back anytime — we're here 24/7!`,
+            other: `📌 *Reminder / Rappel !*\n\n📌 *Follow / Abonnez-vous* | 👍 *Like / Likez* | 🔄 *Share / Partagez* | 💬 *Comment / Commentez*\n\n🚀 Come back / Revenez bientôt !`
+        },
+        'limit': {
+            fr: `⚠️ *Limite quotidienne atteinte.*\n\nVous avez utilisé vos messages gratuits aujourd'hui.\n\n🔄 Revenez demain pour continuer !\n📌 *Abonnez-vous* pour rester informé(e) des nouveautés.\n👍 *Likez et partagez* si le service vous a plu ! 😊`,
+            en: `⚠️ *Daily limit reached.*\n\nYou've used your free messages for today.\n\n🔄 Come back tomorrow!\n📌 *Follow us* to stay updated on new features.\n👍 *Like and share* if you enjoyed the service! 😊`,
+            other: `⚠️ *Limit reached / Limite atteinte.*\n\n🔄 Come back tomorrow / Revenez demain !\n📌 *Follow / Abonnez-vous* 👍 *Like / Likez*`
         }
     };
 
     const langKey = (lang === 'french') ? 'fr' : (lang === 'english') ? 'en' : 'other';
     return messages[type][langKey] || messages[type]['other'];
 }
-
 // ========== INACTIVITY CHECKER (30 min) ==========
 const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
@@ -533,6 +542,39 @@ async function getAIReply(userMessage, senderId) {
 - Émojis avec modération.
 - Réponses courtes et claires (max 300 mots).
 - Encouragez l'apprenant.
+
+📋 RÈGLES DE FORMATAGE (Très important) :
+- Messenger NE SUPPORTE PAS le gras, l'italique, ni le Markdown.
+- Pour les TITRES : utilisez DES MAJUSCULES (ex: CONJUGAISON DU VERBE ÊTRE)
+- Pour les SOUS-TITRES : utilisez un emoji + Texte (ex: 📌 Présent de l'indicatif)
+- Pour les LISTES NUMÉROTÉES : utilisez 1️⃣ 2️⃣ 3️⃣ ou 1) 2) 3)
+- Pour les SÉPARATIONS : utilisez ━━━━━━━━━━━━━━━
+- Pour ce qui est IMPORTANT : utilisez ⚠️ ou ‼️ + MAJUSCULES
+- Pour les POINTS CLÉS : utilisez ✅ ou ❌
+- Pour les EXEMPLES : utilisez 💡 ou 📝
+- Vouvoyez TOUJOURS en français.
+- Réponses courtes et claires (max 300 mots).
+- Encouragez l'apprenant.
+
+📝 EXEMPLE DE RÉPONSE BIEN FORMATÉE :
+
+GRAMMAIRE FRANÇAISE
+📌 Le passé composé
+
+1️⃣ Formation :
+Auxiliaire (être/avoir) + Participe passé
+
+2️⃣ Exemple avec AVOIR :
+💡 J'ai mangé une pomme.
+
+3️⃣ Exemple avec ÊTRE :
+💡 Je suis allé(e) au marché.
+
+⚠️ ATTENTION : Le participe passé s'accorde avec le sujet avec l'auxiliaire ÊTRE.
+
+✅ J'ai compris ? Faites un exercice !
+━━━━━━━━━━━━━━━
+📌 Suivez notre page pour plus d'astuces ! 👍
 
 📢 APPEL AU SOUTIEN (À AJOUTER À LA FIN DE CHAQUE RÉPONSE) :
 - Ajoute TOUJOURS 1-2 phrases courtes à la fin de chaque réponse pour encourager l'utilisateur.

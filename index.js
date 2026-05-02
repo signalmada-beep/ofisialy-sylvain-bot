@@ -10,18 +10,21 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const AI_MODEL = "openai/gpt-oss-120b:free";
 
 // ========== API KEY ROTATION ==========
-const DEFAULT_API_KEYS = [];
-const API_KEYS = (process.env.OPENROUTER_API_KEY || DEFAULT_API_KEYS.join(',')).split(',').map(k => k.trim()).filter(Boolean);
+const API_KEYS = (process.env.OPENROUTER_API_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 let currentKeyIndex = 0;
 
 function getApiKey() {
-    return API_KEYS[currentKeyIndex] || API_KEYS[0];
+    if (API_KEYS.length === 0) {
+        console.error('❌ Aucune clé API trouvée !');
+        return '';
+    }
+    return API_KEYS[currentKeyIndex];
 }
 
 function getNextApiKey() {
-    if (API_KEYS.length <= 1) return getApiKey();
+    if (API_KEYS.length <= 1) return null;
     currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
-    console.log(`🔄 API Key → #${currentKeyIndex + 1}/${API_KEYS.length}`);
+    console.log(`🔄 Switch API key → #${currentKeyIndex + 1}/${API_KEYS.length}`);
     return getApiKey();
 }
 
@@ -68,7 +71,7 @@ function checkQuota(senderId) {
 // ========== HISTORIQUE CONVERSATION ==========
 const conversationHistory = {};
 const MAX_HISTORY = 10;
-const lastActivity = {}; // Pour tracker le temps d'inactivité
+const lastActivity = {};
 
 function addToHistory(senderId, role, content) {
     if (!conversationHistory[senderId]) conversationHistory[senderId] = [];
@@ -87,6 +90,15 @@ function getLastActivity(senderId) {
     return lastActivity[senderId] || Date.now();
 }
 
+// ========== INACTIVITY CHECKER (30 min) ==========
+const INACTIVITY_TIMEOUT = 30 * 60 * 1000;
+
+function checkInactivity(senderId) {
+    const last = getLastActivity(senderId);
+    const now = Date.now();
+    return (now - last) >= INACTIVITY_TIMEOUT;
+}
+
 // ========== INVITATION MESSAGES ==========
 function getFollowMessage(lang, type) {
     const messages = {
@@ -94,11 +106,6 @@ function getFollowMessage(lang, type) {
             fr: `🎉 *Bienvenue sur Ofisialy Sylvain !*\n\nNous sommes ravis de vous accueillir ! 😊\n\n📌 *Abonnez-vous à la page* pour recevoir nos conseils et exercices gratuits chaque jour.\n\n👍 *Likez, commentez, partagez* — votre soutien nous aide à aider plus d'apprenants !\n\n🚀 Commençons ! Que puis-je faire pour vous ?`,
             en: `🎉 *Welcome to Ofisialy Sylvain!*\n\nWe're happy to have you here! 😊\n\n📌 *Follow our page* for daily free tips and exercises.\n\n👍 *Like, comment, share* — your support helps us reach more learners!\n\n🚀 Let's start! How can I help you?`,
             other: `🎉 *Welcome / Bienvenue !*\n\n📌 *Follow / Abonnez-vous* à Ofisialy Sylvain pour apprendre le Français et l'Anglais !\n\n👍 *Like, comment, share / Likez, commentez, partagez* — votre soutien compte ! 🚀`
-        },
-        'share': {
-            fr: `🌟 *Aidez-nous à grandir !*\n\nPartagez cette page avec 3 amis qui veulent apprendre le Français ou l'Anglais.\n\n📌 Suivez @OfisialySylvain\n🔄 Partagez ce message\n👍 Likez notre page\n\nMerci pour votre soutien ! 🙏`,
-            en: `🌟 *Help us grow!*\n\nShare this page with 3 friends who want to learn French or English.\n\n📌 Follow @OfisialySylvain\n🔄 Share this message\n👍 Like our page\n\nThanks for your support! 🙏`,
-            other: `🌟 *Help us grow / Aidez-nous à grandir !*\n\n📌 Follow / Suivez @OfisialySylvain\n🔄 Share / Partagez\n👍 Like / Likez\n\nThanks / Merci ! 🙏`
         },
         'thankyou': {
             fr: `🙏 *Merci pour votre visite !*\n\nSi notre assistance vous a été utile :\n👍 *Likez* la page\n💬 *Commentez* pour nous encourager\n🔄 *Partagez* avec vos amis\n📌 *Abonnez-vous* pour rester informé(e)\n\nÀ bientôt ! 😊`,
@@ -109,24 +116,10 @@ function getFollowMessage(lang, type) {
             fr: `📌 *Rappel amical !*\n\nCela fait un moment que nous n'avons pas échangé. 😊\n\nSi notre page vous plaît :\n👍 *Likez* pour nous soutenir\n💬 *Commentez* pour donner votre avis\n🔄 *Partagez* avec 3 amis qui apprennent le Français ou l'Anglais\n📌 *Abonnez-vous* pour ne rien manquer\n\n🚀 Revenez quand vous voulez — nous sommes là 24h/24 !`,
             en: `📌 *Friendly reminder!*\n\nIt's been a while since we last chatted. 😊\n\nIf you like our page:\n👍 *Like* to support us\n💬 *Comment* to share your thoughts\n🔄 *Share* with 3 friends learning French or English\n📌 *Follow* to stay updated\n\n🚀 Come back anytime — we're here 24/7!`,
             other: `📌 *Reminder / Rappel !*\n\n📌 *Follow / Abonnez-vous* | 👍 *Like / Likez* | 🔄 *Share / Partagez* | 💬 *Comment / Commentez*\n\n🚀 Come back / Revenez bientôt !`
-        },
-        'limit': {
-            fr: `⚠️ *Limite quotidienne atteinte.*\n\nVous avez utilisé vos messages gratuits aujourd'hui.\n\n🔄 Revenez demain pour continuer !\n📌 *Abonnez-vous* pour rester informé(e) des nouveautés.\n👍 *Likez et partagez* si le service vous a plu ! 😊`,
-            en: `⚠️ *Daily limit reached.*\n\nYou've used your free messages for today.\n\n🔄 Come back tomorrow!\n📌 *Follow us* to stay updated on new features.\n👍 *Like and share* if you enjoyed the service! 😊`,
-            other: `⚠️ *Limit reached / Limite atteinte.*\n\n🔄 Come back tomorrow / Revenez demain !\n📌 *Follow / Abonnez-vous* 👍 *Like / Likez*`
         }
     };
-
     const langKey = (lang === 'french') ? 'fr' : (lang === 'english') ? 'en' : 'other';
-    return messages[type][langKey] || messages[type]['other'];
-}
-// ========== INACTIVITY CHECKER (30 min) ==========
-const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
-
-function checkInactivity(senderId) {
-    const last = getLastActivity(senderId);
-    const now = Date.now();
-    return (now - last) >= INACTIVITY_TIMEOUT;
+    return messages[type]?.[langKey] || messages[type]?.['other'] || '';
 }
 
 // ========== QUIZ SYSTEM ==========
@@ -216,7 +209,7 @@ const adminStats = {
     startTime: Date.now()
 };
 
-const ADMIN_IDS = ["SylvainOfisialy"];
+const ADMIN_IDS = ["SylvainOfisialy", "61589117400590"];
 
 // ========== DETECT LANGUAGE ==========
 function detectLanguage(text) {
@@ -273,8 +266,6 @@ function getMainMenu(lang) {
 - Aide rédaction (CV, lettre, email)
 
 🌐 NOUS RÉPONDONS DANS TOUTES LES LANGUES
-- Écrivez dans votre langue, nous vous répondons directement
-- Nos compétences d'enseignement : Français & Anglais
 
 📊 AUTRES
 - STATS / AIDE / ADMIN
@@ -295,8 +286,6 @@ function getMainMenu(lang) {
 - Writing help (CV, letter, email)
 
 🌐 WE REPLY IN ALL LANGUAGES
-- Write in your language, we'll reply directly
-- Our teaching expertise: French & English
 
 📊 OTHER
 - STATS / HELP / ADMIN
@@ -343,9 +332,9 @@ app.post('/webhook', async (req, res) => {
         adminStats.totalMessages++;
         adminStats.totalUsers.add(senderId);
 
-        // ===== CHECK INACTIVITY (30 min) =====
+        // Check inactivity
         const wasInactive = checkInactivity(senderId);
-        
+
         // Attachments
         if (attachments?.length > 0) {
             const type = attachments[0].type;
@@ -378,7 +367,7 @@ app.post('/webhook', async (req, res) => {
         const detectedLang = detectLanguage(text);
         adminStats.languagesDetected[detectedLang] = (adminStats.languagesDetected[detectedLang] || 0) + 1;
 
-        // ===== INACTIVITY RELOAD — ENVOYER RAPPEL =====
+        // ===== INACTIVITY REMINDER =====
         if (wasInactive && conversationHistory[senderId] && conversationHistory[senderId].length > 2) {
             const reminder = getFollowMessage(detectedLang, 'reminder');
             await sendFacebookMessage(senderId, reminder);
@@ -386,12 +375,12 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // ===== PREMIER CONTACT — INVITATION À SUIVRE =====
+        // ===== PREMIER CONTACT — WELCOME =====
         if (!conversationHistory[senderId] || conversationHistory[senderId].length === 0) {
-            const followMsg = getFollowMessage(detectedLang, 'welcome');
-            await sendFacebookMessage(senderId, followMsg);
+            const welcomeMsg = getFollowMessage(detectedLang, 'welcome');
+            await sendFacebookMessage(senderId, welcomeMsg);
             adminStats.followRequests++;
-            addToHistory(senderId, 'assistant', followMsg);
+            addToHistory(senderId, 'assistant', welcomeMsg);
         }
 
         // ===== MENU / AIDE =====
@@ -450,9 +439,8 @@ app.post('/webhook', async (req, res) => {
                 continue;
             }
             await sendTyping(senderId);
-            const prompt = `Corrige ce texte et explique chaque erreur : "${txt}"`;
-            addToHistory(senderId, 'user', prompt);
-            const reply = await getAIReply(prompt, senderId);
+            addToHistory(senderId, 'user', text);
+            const reply = await getAIReply(`Corrige ce texte et explique chaque erreur : "${txt}"`, senderId);
             addToHistory(senderId, 'assistant', reply);
             await sendFacebookMessage(senderId, reply);
             continue;
@@ -466,9 +454,8 @@ app.post('/webhook', async (req, res) => {
                 continue;
             }
             await sendTyping(senderId);
-            const prompt = `Fais un résumé clair et concis de ce texte : "${txt}"`;
-            addToHistory(senderId, 'user', prompt);
-            const reply = await getAIReply(prompt, senderId);
+            addToHistory(senderId, 'user', text);
+            const reply = await getAIReply(`Fais un résumé clair et concis de ce texte : "${txt}"`, senderId);
             addToHistory(senderId, 'assistant', reply);
             await sendFacebookMessage(senderId, reply);
             continue;
@@ -482,9 +469,8 @@ app.post('/webhook', async (req, res) => {
                 continue;
             }
             await sendTyping(senderId);
-            const prompt = `Conjugue le verbe "${verbe}" à tous les temps principaux.`;
-            addToHistory(senderId, 'user', prompt);
-            const reply = await getAIReply(prompt, senderId);
+            addToHistory(senderId, 'user', text);
+            const reply = await getAIReply(`Conjugue le verbe "${verbe}" à tous les temps principaux.`, senderId);
             addToHistory(senderId, 'assistant', reply);
             await sendFacebookMessage(senderId, reply);
             continue;
@@ -493,8 +479,7 @@ app.post('/webhook', async (req, res) => {
         // ===== QUOTA =====
         const quota = checkQuota(senderId);
         if (!quota.allowed) {
-            const limitMsg = `⚠️ Limite quotidienne atteinte.\n\nVous avez utilisé vos ${DAILY_LIMIT} messages aujourd'hui.\n\n🔄 Revenez demain !\n📌 Abonnez-vous à la page pour rester informé(e). 😊`;
-            await sendFacebookMessage(senderId, limitMsg);
+            await sendFacebookMessage(senderId, `⚠️ Limite quotidienne atteinte.\n\nVous avez utilisé vos ${DAILY_LIMIT} messages aujourd'hui.\n\n🔄 Revenez demain !\n📌 Abonnez-vous à la page. 😊`);
             continue;
         }
         if (quota.mode === 'test' && quota.remaining === 0) {
@@ -504,7 +489,7 @@ app.post('/webhook', async (req, res) => {
             await sendFacebookMessage(senderId, "ℹ️ Dernier message gratuit aujourd'hui. À demain ! 📅");
         }
 
-        // ===== AI REPLY (MULTILINGUE DIRECT) =====
+        // ===== AI REPLY =====
         await sendTyping(senderId);
         addToHistory(senderId, 'user', text);
         const aiReply = await getAIReply(text, senderId);
@@ -520,81 +505,31 @@ async function getAIReply(userMessage, senderId) {
 
 🎯 RÔLE : Assistant pédagogique expert en FRANÇAIS et ANGLAIS.
 
-🌐 LANGUES : Vous comprenez et parlez TOUTES les langues. Répondez TOUJOURS dans LA MÊME LANGUE que l'utilisateur, quelle qu'elle soit.
+🌐 LANGUES : Vous comprenez et parlez TOUTES les langues. Répondez TOUJOURS dans LA MÊME LANGUE que l'utilisateur.
 
-⚠️ IMPORTANT — SI L'UTILISATEUR N'ÉCRIT PAS EN FRANÇAIS NI EN ANGLAIS :
-1. Répondez dans SA LANGUE pour le saluer et expliquer.
-2. Expliquez clairement que vos COMPÉTENCES D'ENSEIGNEMENT sont UNIQUEMENT en FRANÇAIS et ANGLAIS.
-3. Proposez-lui de passer en Français ou en Anglais pour apprendre.
-4. NE DONNEZ PAS de leçon de grammaire ou de vocabulaire dans une autre langue.
+⚠️ SI L'UTILISATEUR N'ÉCRIT PAS EN FRANÇAIS NI EN ANGLAIS :
+1. Répondez dans SA LANGUE pour le saluer.
+2. Expliquez que vos COMPÉTENCES D'ENSEIGNEMENT sont UNIQUEMENT en FRANÇAIS et ANGLAIS.
+3. Proposez de passer en Français ou Anglais pour apprendre.
+4. NE DONNEZ PAS de leçon de grammaire dans une autre langue.
 
-📋 COMPÉTENCES (Français & Anglais uniquement) :
-- Grammaire, conjugaison, orthographe, vocabulaire
-- Synonymes, antonymes, homophones
-- Compréhension de texte, résumé, analyse
-- Rédaction : lettre, CV, email, dissertation
-- Préparation examens (BAC, TOEFL, IELTS, DELF)
-- Exercices pratiques et corrections détaillées
-
-📋 RÈGLES :
-- Vouvoyez en français, soyez poli dans toutes les langues.
-- PAS de Markdown. Utilisez des MAJUSCULES pour les titres.
+📋 FORMATAGE :
+- PAS de Markdown.
+- MAJUSCULES pour les titres.
 - Émojis avec modération.
-- Réponses courtes et claires (max 300 mots).
-- Encouragez l'apprenant.
+- Réponses courtes et claires.
+- Vouvoyez en français.
 
-📋 RÈGLES DE FORMATAGE (Très important) :
-- Messenger NE SUPPORTE PAS le gras, l'italique, ni le Markdown.
-- Pour les TITRES : utilisez DES MAJUSCULES (ex: CONJUGAISON DU VERBE ÊTRE)
-- Pour les SOUS-TITRES : utilisez un emoji + Texte (ex: 📌 Présent de l'indicatif)
-- Pour les LISTES NUMÉROTÉES : utilisez 1️⃣ 2️⃣ 3️⃣ ou 1) 2) 3)
-- Pour les SÉPARATIONS : utilisez ━━━━━━━━━━━━━━━
-- Pour ce qui est IMPORTANT : utilisez ⚠️ ou ‼️ + MAJUSCULES
-- Pour les POINTS CLÉS : utilisez ✅ ou ❌
-- Pour les EXEMPLES : utilisez 💡 ou 📝
-- Vouvoyez TOUJOURS en français.
-- Réponses courtes et claires (max 300 mots).
-- Encouragez l'apprenant.
-
-📝 EXEMPLE DE RÉPONSE BIEN FORMATÉE :
-
-GRAMMAIRE FRANÇAISE
-📌 Le passé composé
-
-1️⃣ Formation :
-Auxiliaire (être/avoir) + Participe passé
-
-2️⃣ Exemple avec AVOIR :
-💡 J'ai mangé une pomme.
-
-3️⃣ Exemple avec ÊTRE :
-💡 Je suis allé(e) au marché.
-
-⚠️ ATTENTION : Le participe passé s'accorde avec le sujet avec l'auxiliaire ÊTRE.
-
-✅ J'ai compris ? Faites un exercice !
-━━━━━━━━━━━━━━━
-📌 Suivez notre page pour plus d'astuces ! 👍
-
-📢 APPEL AU SOUTIEN (À AJOUTER À LA FIN DE CHAQUE RÉPONSE) :
-- Ajoute TOUJOURS 1-2 phrases courtes à la fin de chaque réponse pour encourager l'utilisateur.
-- Varie les messages parmi ces exemples :
-  * "📌 Suivez notre page pour plus de contenu éducatif !"
-  * "👍 Likez et partagez si cela vous a aidé !"
-  * "💬 Laissez un commentaire pour nous encourager !"
-  * "🔄 Partagez cette page avec vos amis qui apprennent le Français ou l'Anglais !"
-  * "⭐ Votre soutien nous aide à grandir — likez, commentez, partagez !"
-  * "📢 Invitez vos amis à découvrir Ofisialy Sylvain !"
-  * "🙏 Votre avis compte — dites-nous ce que vous pensez en commentaire !"
-  * "🚀 Aidez-nous à atteindre 100 abonnés — partagez cette page !"
-- Adapte le message à la langue de l'utilisateur.
-- SOIS NATUREL — ne force pas, ajoute le message de façon fluide après la réponse.
+📢 À la fin de chaque réponse, ajoutez UNE phrase d'encouragement à suivre/liker/partager la page.
 
 🚫 LIMITES : Pas d'images, fichiers, vidéos, audio.`;
 
     let lastError = null;
 
     for (let attempt = 0; attempt < API_KEYS.length; attempt++) {
+        const currentKey = getApiKey();
+        if (!currentKey) break;
+
         try {
             const response = await axios.post(
                 'https://openrouter.ai/api/v1/chat/completions',
@@ -610,7 +545,7 @@ Auxiliaire (être/avoir) + Participe passé
                 },
                 {
                     headers: {
-                        'Authorization': `Bearer ${getApiKey()}`,
+                        'Authorization': `Bearer ${currentKey}`,
                         'Content-Type': 'application/json',
                         'HTTP-Referer': 'https://ofisialysylvain.com',
                         'X-Title': 'Ofisialy Sylvain Bot'
@@ -618,31 +553,26 @@ Auxiliaire (être/avoir) + Participe passé
                     timeout: 30000
                 }
             );
-            console.log(`✅ AI Reply (Key #${currentKeyIndex + 1})`);
+            console.log('✅ AI Reply success');
             return response.data.choices[0].message.content;
-            
+
         } catch (error) {
             lastError = error;
-            console.warn(`⚠️ Key #${currentKeyIndex + 1} failed: ${error.response?.status || error.code}`);
-            
+            console.warn(`⚠️ Erreur clé #${currentKeyIndex + 1}: ${error.response?.status || error.message}`);
+
             if (error.response?.status === 402 || error.response?.status === 429) {
                 if (hasNextKey()) {
                     getNextApiKey();
                     continue;
                 }
             }
-            
-            if (error.code === 'ECONNABORTED' && hasNextKey()) {
-                getNextApiKey();
-                continue;
-            }
-            
-            break;
+
+            if (error.code !== 'ECONNABORTED') break;
         }
     }
 
-    console.error('❌ All API keys exhausted:', lastError?.message);
-    return "🔧 Maintenance en cours. Merci de réessayer dans quelques instants. 🙏";
+    console.error('❌ Toutes les clés ont échoué:', lastError?.message);
+    return "🔧 Service momentanément indisponible. Merci de réessayer dans quelques instants. 🙏";
 }
 
 // ========== SEND MESSAGE ==========

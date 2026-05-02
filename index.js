@@ -33,6 +33,53 @@ function hasNextKey() {
     return currentKeyIndex < API_KEYS.length - 1;
 }
 
+// ========== RATE LIMITING POUR GROUPES ==========
+const groupCommentQueue = {};
+const groupLastReply = {};
+const GROUP_BATCH_SIZE = 3;
+const GROUP_COOLDOWN = 10 * 60 * 1000;
+const GROUP_REPLY_DELAY = 5000;
+
+async function processGroupQueue(groupId) {
+    if (!groupCommentQueue[groupId] || groupCommentQueue[groupId].length === 0) return;
+
+    const now = Date.now();
+    const lastReply = groupLastReply[groupId] || 0;
+
+    if (now - lastReply < GROUP_COOLDOWN) {
+        console.log(`⏳ Groupe ${groupId} en cooldown — ${Math.ceil((GROUP_COOLDOWN - (now - lastReply)) / 60000)} min restantes`);
+        return;
+    }
+
+    console.log(`📤 Traitement queue groupe ${groupId}: ${groupCommentQueue[groupId].length} en attente`);
+
+    const batch = groupCommentQueue[groupId].splice(0, GROUP_BATCH_SIZE);
+
+    for (let i = 0; i < batch.length; i++) {
+        const item = batch[i];
+
+        if (ADMIN_IDS.includes(item.senderId)) continue;
+        if (now - item.timestamp > 30 * 60 * 1000) continue;
+
+        console.log(`💬 [GROUPE ${groupId}] Réponse à ${item.senderName}: "${item.message?.substring(0, 40)}"`);
+
+        const reply = await generateGroupCommentReply(item.message, item.senderName, groupId);
+        await replyToGroupComment(groupId, item.commentId, reply);
+        adminStats.commentsReplied++;
+
+        if (i < batch.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, GROUP_REPLY_DELAY));
+        }
+    }
+
+    groupLastReply[groupId] = Date.now();
+
+    if (groupCommentQueue[groupId].length > 0) {
+        console.log(`📋 Reste ${groupCommentQueue[groupId].length} en attente pour groupe ${groupId}`);
+        setTimeout(() => processGroupQueue(groupId), GROUP_COOLDOWN);
+    }
+}
+
 // ========== QUOTAS ==========
 const userQuotas = {};
 const TEST_MODE_LIMIT = 20;
@@ -319,28 +366,55 @@ app.post('/webhook', async (req, res) => {
 
     res.status(200).send('EVENT_RECEIVED');
 
-    // ===== GÉRER LES COMMENTAIRES (feed) =====
+    // ===== GÉRER LES CHANGES (feed + group_feed) =====
     if (body.entry[0]?.changes) {
         for (const change of body.entry[0].changes) {
+
+            // Commentaires sur la PAGE
             if (change.field === 'feed' && change.value?.item === 'comment') {
                 const commentId = change.value.comment_id;
                 const senderId = change.value.from?.id;
                 const senderName = change.value.from?.name || '';
                 const commentMessage = change.value.message;
 
-                // Aza mamaly ny tena (bot na admin)
                 if (!senderId || ADMIN_IDS.includes(senderId) || senderId === PAGE_ID) {
-                    console.log('⏭️ Commentaire ignoré (admin/page/self)');
+                    console.log('⏭️ Commentaire Page ignoré (admin/page/self)');
                     continue;
                 }
-
                 if (!commentMessage) continue;
 
-                console.log(`💬 Commentaire de ${senderName} (${senderId}): ${commentMessage?.substring(0, 60)}`);
-
+                console.log(`💬 [PAGE] Commentaire de ${senderName}: ${commentMessage?.substring(0, 60)}`);
                 const reply = await generateCommentReply(commentMessage, senderName);
                 await replyToComment(commentId, reply);
                 adminStats.commentsReplied++;
+            }
+
+            // Commentaires sur le GROUPE (ajoutés à la queue)
+            if (change.field === 'group_feed' && change.value?.item === 'comment') {
+                const groupId = change.value.group_id;
+                const commentId = change.value.comment_id;
+                const senderId = change.value.from?.id;
+                const senderName = change.value.from?.name || '';
+                const commentMessage = change.value.message;
+
+                if (!senderId || ADMIN_IDS.includes(senderId)) {
+                    console.log(`⏭️ Commentaire Groupe ignoré (admin): ${senderName}`);
+                    continue;
+                }
+                if (!commentMessage) continue;
+
+                if (!groupCommentQueue[groupId]) groupCommentQueue[groupId] = [];
+
+                groupCommentQueue[groupId].push({
+                    commentId, senderId, senderName,
+                    message: commentMessage, timestamp: Date.now()
+                });
+
+                console.log(`📥 [GROUPE ${groupId}] Commentaire de ${senderName} ajouté à la queue (${groupCommentQueue[groupId].length} en attente)`);
+
+                if (groupCommentQueue[groupId].length >= GROUP_BATCH_SIZE) {
+                    processGroupQueue(groupId);
+                }
             }
         }
         return;
@@ -359,7 +433,6 @@ app.post('/webhook', async (req, res) => {
 
         const wasInactive = checkInactivity(senderId);
 
-        // Attachments
         if (attachments?.length > 0) {
             const type = attachments[0].type;
             const replies = {
@@ -379,7 +452,6 @@ app.post('/webhook', async (req, res) => {
         const textLower = text.toLowerCase();
         console.log(`📩 [${senderId.slice(-4)}] ${text.substring(0, 60)}`);
 
-        // Commandes Admin
         if (ADMIN_IDS.includes(senderId) && textLower.startsWith('admin')) {
             const uptime = Math.floor((Date.now() - adminStats.startTime) / 60000);
             const statsMsg = `📊 STATISTIQUES ADMIN\n\n👥 Utilisateurs uniques: ${adminStats.totalUsers.size}\n💬 Messages totaux: ${adminStats.totalMessages}\n💬 Commentaires répondus: ${adminStats.commentsReplied}\n🎮 Quiz démarrés: ${adminStats.quizStarted}\n✅ Quiz terminés: ${adminStats.quizCompleted}\n📢 Follow requests: ${adminStats.followRequests}\n⏱️ Uptime: ${uptime} min\n\n🌐 Langues:\n${Object.entries(adminStats.languagesDetected).map(([k, v]) => `- ${k}: ${v}`).join('\n')}`;
@@ -390,7 +462,6 @@ app.post('/webhook', async (req, res) => {
         const detectedLang = detectLanguage(text);
         adminStats.languagesDetected[detectedLang] = (adminStats.languagesDetected[detectedLang] || 0) + 1;
 
-        // Inactivity reminder
         if (wasInactive && conversationHistory[senderId] && conversationHistory[senderId].length > 2) {
             const reminder = getFollowMessage(detectedLang, 'reminder');
             await sendFacebookMessage(senderId, reminder);
@@ -398,7 +469,6 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // Premier contact
         if (!conversationHistory[senderId] || conversationHistory[senderId].length === 0) {
             const welcomeMsg = getFollowMessage(detectedLang, 'welcome');
             await sendFacebookMessage(senderId, welcomeMsg);
@@ -406,13 +476,11 @@ app.post('/webhook', async (req, res) => {
             addToHistory(senderId, 'assistant', welcomeMsg);
         }
 
-        // Menu
         if (['menu', 'aide', 'help', 'start', 'bonjour', 'hello', 'salut', 'hi', 'bonsoir'].some(w => textLower === w || textLower.startsWith(w + ' '))) {
             await sendFacebookMessage(senderId, getMainMenu(detectedLang === 'french' ? 'fr' : 'en'));
             continue;
         }
 
-        // Stats
         if (textLower === 'stats' || textLower === 'statistiques') {
             const quota = userQuotas[senderId];
             const history = getHistory(senderId);
@@ -423,7 +491,6 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // Quiz
         if (textLower.includes('quiz français') || textLower.includes('quiz francais')) {
             adminStats.quizStarted++;
             await sendFacebookMessage(senderId, startQuiz(senderId, 'fr'));
@@ -443,7 +510,6 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // Exercices
         if (textLower.includes('exercice français') || textLower.includes('exercice francais') || textLower.includes('pratique français')) {
             await sendFacebookMessage(senderId, exercicesFR[Math.floor(Math.random() * exercicesFR.length)]);
             continue;
@@ -453,7 +519,6 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // Correction
         if (textLower.startsWith('corrige ') || textLower.startsWith('correction ') || textLower.startsWith('correct ')) {
             const txt = text.substring(text.indexOf(' ') + 1).trim();
             if (txt.length < 5) {
@@ -468,7 +533,6 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // Résumé
         if (textLower.startsWith('résumé ') || textLower.startsWith('resume ') || textLower.startsWith('summarize ') || textLower.startsWith('summary ')) {
             const txt = text.substring(text.indexOf(' ') + 1).trim();
             if (txt.length < 30) {
@@ -483,7 +547,6 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // Conjugaison
         if (textLower.startsWith('conjugue ') || textLower.startsWith('conjugate ')) {
             const verbe = text.substring(text.indexOf(' ') + 1).trim();
             if (!verbe) {
@@ -498,10 +561,9 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // Quota
         const quota = checkQuota(senderId);
         if (!quota.allowed) {
-            await sendFacebookMessage(senderId, `⚠️ Limite quotidienne atteinte.\n\nVous avez utilisé vos ${DAILY_LIMIT} messages aujourd'hui.\n\n🔄 Revenez demain !\n📌 Abonnez-vous à la page pour rester informé(e). 😊`);
+            await sendFacebookMessage(senderId, `⚠️ Limite quotidienne atteinte.\n\nVous avez utilisé vos ${DAILY_LIMIT} messages aujourd'hui.\n\n🔄 Revenez demain !\n📌 Abonnez-vous à la page. 😊`);
             continue;
         }
         if (quota.mode === 'test' && quota.remaining === 0) {
@@ -511,7 +573,6 @@ app.post('/webhook', async (req, res) => {
             await sendFacebookMessage(senderId, "ℹ️ Dernier message gratuit aujourd'hui. À demain ! 📅");
         }
 
-        // AI Reply
         await sendTyping(senderId);
         addToHistory(senderId, 'user', text);
         const aiReply = await getAIReply(text, senderId);
@@ -520,16 +581,16 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// ========== RÉPONSE COMMENTAIRES AUTOMATIQUE ==========
+// ========== RÉPONSE COMMENTAIRES PAGE ==========
 async function replyToComment(commentId, message) {
     try {
         await axios.post(
             `https://graph.facebook.com/v19.0/${commentId}/comments`,
             { message, access_token: PAGE_ACCESS_TOKEN }
         );
-        console.log('✅ Réponse commentaire envoyée');
+        console.log('✅ Réponse commentaire Page envoyée');
     } catch (error) {
-        console.error('❌ Erreur réponse commentaire:', error.message);
+        console.error('❌ Erreur réponse Page:', error.message);
     }
 }
 
@@ -543,43 +604,73 @@ Tu es le community manager de la page. Générez une réponse :
 - CHALEUREUSE et PROFESSIONNELLE (vouvoiement)
 - Remercie la personne pour son commentaire
 - Fais référence au contenu de son commentaire si pertinent
-- Invite-la à découvrir notre assistant IA sur Messenger (m.me/OfisialySylvain) pour apprendre le Français et l'Anglais
-- Rappelle que la page propose des quiz, exercices, et corrections gratuits
-- Termine par une note positive et encourageante
+- Invite-la à découvrir notre assistant IA sur Messenger (m.me/OfisialySylvain)
+- Rappelle que la page propose des quiz, exercices, corrections gratuits en Français et Anglais
+- Termine par une note positive
 - 3-4 phrases maximum
 - En français UNIQUEMENT
 - PAS de Markdown
-- Utilise UN ou DEUX emojis maximum`;
+- 2 emojis maximum`;
 
     try {
         const currentKey = getApiKey();
         const response = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
-            {
-                model: AI_MODEL,
-                max_tokens: 200,
-                temperature: 0.7,
-                messages: [{ role: 'user', content: prompt }]
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${currentKey}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': 'https://ofisialysylvain.com',
-                    'X-Title': 'Ofisialy Sylvain Bot'
-                },
-                timeout: 15000
-            }
+            { model: AI_MODEL, max_tokens: 200, temperature: 0.7, messages: [{ role: 'user', content: prompt }] },
+            { headers: { 'Authorization': `Bearer ${currentKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://ofisialysylvain.com', 'X-Title': 'Ofisialy Sylvain Bot' }, timeout: 15000 }
         );
-        const reply = response.data.choices[0]?.message?.content;
-        return reply || "Merci beaucoup pour votre commentaire ! Nous sommes ravis de vous compter parmi notre communauté d'apprenants. N'hésitez pas à découvrir notre assistant IA gratuit sur Messenger pour progresser en Français et en Anglais. 🎓✨";
+        return response.data.choices[0]?.message?.content || "Merci pour votre commentaire ! Découvrez notre assistant IA gratuit sur Messenger pour apprendre le Français et l'Anglais. 🎓✨";
     } catch (error) {
-        console.error('❌ Erreur génération réponse commentaire:', error.message);
-        return "Merci beaucoup pour votre commentaire ! Nous sommes ravis de vous compter parmi notre communauté d'apprenants. N'hésitez pas à découvrir notre assistant IA gratuit sur Messenger pour progresser en Français et en Anglais. 🎓✨";
+        return "Merci pour votre commentaire ! Découvrez notre assistant IA gratuit sur Messenger pour apprendre le Français et l'Anglais. 🎓✨";
     }
 }
 
-// ========== AI REPLY WITH API KEY ROTATION ==========
+// ========== RÉPONSE COMMENTAIRES GROUPE ==========
+async function replyToGroupComment(groupId, commentId, message) {
+    try {
+        await axios.post(
+            `https://graph.facebook.com/v19.0/${commentId}/comments`,
+            { message, access_token: PAGE_ACCESS_TOKEN }
+        );
+        console.log(`✅ Réponse commentaire groupe ${groupId} envoyée`);
+    } catch (error) {
+        console.error(`❌ Erreur réponse groupe ${groupId}:`, error.message);
+    }
+}
+
+async function generateGroupCommentReply(userComment, userName = '', groupId = '') {
+    const name = userName ? ` ${userName}` : '';
+    const prompt = `Un membre${name} a commenté dans un groupe Facebook éducatif.
+
+Son commentaire : "${userComment}"
+
+Tu es l'assistant de la page "Ofisialy Sylvain". Générez une réponse :
+- CHALEUREUSE et PROFESSIONNELLE (vouvoiement)
+- Remercie la personne pour sa participation dans le groupe
+- Fais référence au contenu de son commentaire si pertinent
+- Invite-la à découvrir notre assistant IA 100% GRATUIT sur Messenger (m.me/OfisialySylvain)
+- Rappelle que notre page propose des quiz, exercices, corrections en Français et Anglais
+- Termine par une note positive
+- 3-4 phrases maximum
+- En français UNIQUEMENT
+- PAS de Markdown
+- 2 emojis maximum
+- Mentionne que le service est GRATUIT`;
+
+    try {
+        const currentKey = getApiKey();
+        const response = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            { model: AI_MODEL, max_tokens: 200, temperature: 0.7, messages: [{ role: 'user', content: prompt }] },
+            { headers: { 'Authorization': `Bearer ${currentKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://ofisialysylvain.com', 'X-Title': 'Ofisialy Sylvain Bot' }, timeout: 15000 }
+        );
+        return response.data.choices[0]?.message?.content || "Merci pour votre participation dans ce groupe ! Découvrez notre assistant IA 100% GRATUIT sur Messenger pour progresser en Français et en Anglais avec des quiz personnalisés. 🎓✨";
+    } catch (error) {
+        return "Merci pour votre participation dans ce groupe ! Découvrez notre assistant IA 100% GRATUIT sur Messenger pour progresser en Français et en Anglais. 🎓✨";
+    }
+}
+
+// ========== AI REPLY ==========
 async function getAIReply(userMessage, senderId) {
     const history = getHistory(senderId);
     const systemPrompt = `Vous êtes l'assistant IA officiel de la page "Ofisialy Sylvain", créée par Sylvain Solofoniaina le 01 Mai 2026.
@@ -608,48 +699,23 @@ async function getAIReply(userMessage, senderId) {
     for (let attempt = 0; attempt < API_KEYS.length; attempt++) {
         const currentKey = getApiKey();
         if (!currentKey) break;
-
         try {
             const response = await axios.post(
                 'https://openrouter.ai/api/v1/chat/completions',
-                {
-                    model: AI_MODEL,
-                    max_tokens: 500,
-                    temperature: 0.6,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        ...history.slice(-8),
-                        { role: 'user', content: userMessage }
-                    ]
-                },
-                {
-                    headers: {
-                        'Authorization': `Bearer ${currentKey}`,
-                        'Content-Type': 'application/json',
-                        'HTTP-Referer': 'https://ofisialysylvain.com',
-                        'X-Title': 'Ofisialy Sylvain Bot'
-                    },
-                    timeout: 30000
-                }
+                { model: AI_MODEL, max_tokens: 500, temperature: 0.6, messages: [{ role: 'system', content: systemPrompt }, ...history.slice(-8), { role: 'user', content: userMessage }] },
+                { headers: { 'Authorization': `Bearer ${currentKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://ofisialysylvain.com', 'X-Title': 'Ofisialy Sylvain Bot' }, timeout: 30000 }
             );
             console.log('✅ AI Reply success');
             return response.data.choices[0].message.content;
-
         } catch (error) {
             console.warn(`⚠️ Erreur clé #${currentKeyIndex + 1}: ${error.response?.status || error.message}`);
-
             if (error.response?.status === 402 || error.response?.status === 429) {
-                if (hasNextKey()) {
-                    getNextApiKey();
-                    continue;
-                }
+                if (hasNextKey()) { getNextApiKey(); continue; }
             }
-
             if (error.code !== 'ECONNABORTED') break;
         }
     }
-
-    return "🔧 Service momentanément indisponible. Merci de réessayer dans quelques instants. 🙏";
+    return "🔧 Service momentanément indisponible. Merci de réessayer. 🙏";
 }
 
 // ========== SEND MESSAGE ==========
@@ -664,6 +730,15 @@ async function sendFacebookMessage(recipientId, text) {
         console.error('❌ Facebook send error:', error.message);
     }
 }
+
+// ========== TIMER QUEUES GROUPES ==========
+setInterval(() => {
+    for (const groupId of Object.keys(groupCommentQueue)) {
+        if (groupCommentQueue[groupId]?.length > 0) {
+            processGroupQueue(groupId);
+        }
+    }
+}, 5 * 60 * 1000);
 
 // ========== START ==========
 const PORT = process.env.PORT || 3000;

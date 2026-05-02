@@ -9,8 +9,6 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "ofisialysylvain-2024";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const AI_MODEL = "openai/gpt-4o-mini-search-preview";
-const LANGBLY_API_KEY = "BtXwg98wQwy7SxbxgKz7Bp";
-const LANGBLY_TRANSLATE_URL = "https://api.langbly.com/v1/translate";
 
 // ========== QUOTAS ==========
 const userQuotas = {};
@@ -71,7 +69,7 @@ const quizFR = [
     { question: "❓ Conjuguez le verbe ALLER au présent, 1ère personne du singulier :", answer: ["je vais"], hint: "Je ___ au marché." },
     { question: "❓ Quel est le féminin de BEAU ?", answer: ["belle"], hint: "Une ___ fleur." },
     { question: "❓ Complétez : 'Il faut que tu ___ (venir) ici.'", answer: ["viennes"], hint: "Subjonctif présent." },
-    { question: "❓ Quel est le contraire de RAPIDE ?", answer: ["lent", "lente", "lente"], hint: "Une tortue est très ___." },
+    { question: "❓ Quel est le contraire de RAPIDE ?", answer: ["lent", "lente"], hint: "Une tortue est très ___." },
     { question: "❓ Accordez : 'Les fleurs que j'ai ___ (cueillir) sont belles.'", answer: ["cueillies"], hint: "Accord du participe passé avec COD avant." },
     { question: "❓ Quelle est la bonne orthographe : 'il a mangé' ou 'il a manger' ?", answer: ["il a mangé"], hint: "Participe passé avec avoir." },
     { question: "❓ Pluriel de OEIL ?", answer: ["yeux"], hint: "Pluriel irrégulier." },
@@ -147,15 +145,12 @@ const adminStats = {
     quizStarted: 0,
     quizCompleted: 0,
     languagesDetected: {},
-    translationsDone: 0,
     startTime: Date.now()
 };
 
 const ADMIN_IDS = ["SylvainOfisialy"];
 
 // ========== DETECT LANGUAGE ==========
-const waitingUsers = {};
-
 function detectLanguage(text) {
     const normalized = text.toLowerCase().trim();
     const malagasyWords = ['manao', 'ahoana', 'misaotra', 'azafady', 'ianao', 'mbola', 'tsara', 'mety', 'aho', 'anao', 'ny', 'ary', 'fa', 'koa', 've', 'inona', 'mba'];
@@ -193,106 +188,52 @@ function detectLanguage(text) {
     return 'unknown';
 }
 
-// ========== TRANSLATION ==========
-async function translateText(text, targetLang) {
-    try {
-        const response = await axios.post(
-            LANGBLY_TRANSLATE_URL,
-            { text, target: targetLang },
-            {
-                headers: {
-                    'Authorization': `Bearer ${LANGBLY_API_KEY}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 10000
-            }
-        );
-        return response.data.translatedText || response.data.translation || response.data.text || null;
-    } catch (error) {
-        console.error('❌ Translation error:', error.message);
-        return null;
-    }
-}
-
-function getLangCode(detectedLang) {
-    const langMap = {
-        'malagasy': 'mg',
-        'spanish': 'es',
-        'arabic': 'ar',
-        'chinese': 'zh',
-        'russian': 'ru',
-        'japanese': 'ja',
-        'korean': 'ko',
-        'unknown': 'fr'
-    };
-    return langMap[detectedLang] || 'fr';
-}
-
 // ========== MENU PRINCIPAL ==========
 function getMainMenu(lang) {
     if (lang === 'fr' || lang === 'french') {
         return `👋 Bienvenue sur Ofisialy Sylvain ! 🎓
 
-Voici ce que nous pouvons faire pour vous :
-
 📚 APPRENTISSAGE FRANÇAIS & ANGLAIS
-- Tapez QUIZ FRANÇAIS pour un quiz
-- Tapez EXERCICE FRANÇAIS pour pratiquer
-- Tapez CONJUGUE [verbe] pour conjuguer
-- Posez n'importe quelle question de grammaire
-
-🇬🇧 ENGLISH LEARNING
-- Type QUIZ ENGLISH for a quiz
-- Type EXERCISE ENGLISH to practice
-- Type CONJUGATE [verb] for conjugation
-- Ask any grammar question!
+- QUIZ FRANÇAIS / QUIZ ENGLISH
+- EXERCICE FRANÇAIS / EXERCISE ENGLISH
+- CONJUGUE [verbe] / CONJUGATE [verb]
+- Posez vos questions de grammaire
 
 📖 CORRECTIONS & OUTILS
-- Tapez CORRIGE [texte] pour corriger
-- Tapez RÉSUMÉ [texte] pour résumer
-- Aide rédaction (lettre, CV, email)
+- CORRIGE [texte] / CORRECT [text]
+- RÉSUMÉ [texte] / SUMMARIZE [text]
+- Aide rédaction (CV, lettre, email)
 
-🌐 AUTRES LANGUES
-- Nous acceptons toutes les langues !
-- Votre message sera traduit automatiquement
-- Nos compétences principales restent le Français et l'Anglais
+🌐 NOUS PARLONS TOUTES LES LANGUES
+- Écrivez dans votre langue, nous vous répondons !
+- Nos compétences d'enseignement : Français & Anglais
 
 📊 AUTRES
-- Tapez STATS pour vos statistiques
-- Tapez AIDE pour revoir ce menu
+- STATS / AIDE / ADMIN
 
-🚀 Commençons ! Que puis-je faire pour vous ?`;
+🚀 Que puis-je faire pour vous ?`;
     }
     return `👋 Welcome to Ofisialy Sylvain! 🎓
 
-Here's what we can do for you:
-
 📚 FRENCH & ENGLISH LEARNING
-- Type QUIZ FRANÇAIS for a quiz
-- Type EXERCICE FRANÇAIS to practice
-- Type CONJUGUE [verb] for conjugation
-- Ask any grammar question!
-
-🇫🇷 APPRENTISSAGE
-- Type QUIZ FRANÇAIS for a quiz
-- Type EXERCICE FRANÇAIS to practice
-- Type CONJUGUE [verb] for conjugation
+- QUIZ FRANÇAIS / QUIZ ENGLISH
+- EXERCICE FRANÇAIS / EXERCISE ENGLISH
+- CONJUGUE [verb] / CONJUGATE [verb]
+- Ask your grammar questions
 
 📖 CORRECTIONS & TOOLS
-- Type CORRECT [text] to fix mistakes
-- Type SUMMARIZE [text] for a summary
-- Writing help (letter, CV, email)
+- CORRIGE [text] / CORRECT [text]
+- RÉSUMÉ [text] / SUMMARIZE [text]
+- Writing help (CV, letter, email)
 
-🌐 OTHER LANGUAGES
-- We accept all languages!
-- Your message will be automatically translated
-- Our core expertise remains French and English
+🌐 WE SPEAK ALL LANGUAGES
+- Write in your language, we'll reply!
+- Our teaching expertise: French & English
 
 📊 OTHER
-- Type STATS for your statistics
-- Type HELP to see this menu again
+- STATS / HELP / ADMIN
 
-🚀 Let's start! How can I help you?`;
+🚀 How can I help you?`;
 }
 
 // ========== TYPING ==========
@@ -331,7 +272,6 @@ app.post('/webhook', async (req, res) => {
         const messageText = event.message?.text;
         const attachments = event.message?.attachments;
 
-        // Stats
         adminStats.totalMessages++;
         adminStats.totalUsers.add(senderId);
 
@@ -343,7 +283,7 @@ app.post('/webhook', async (req, res) => {
                 audio: "🎤 Message vocal reçu / Voice message received\n\nNous ne pouvons pas l'écouter. Écrivez votre question.\nWe cannot listen to it. Please write your question. ✍️",
                 video: "🎬 Vidéo reçue / Video received\n\nNous ne pouvons pas la visionner. Décrivez votre besoin.\nWe cannot view it. Please describe your need. 📝",
                 file: "📁 Fichier reçu / File received\n\nNous ne pouvons pas l'ouvrir. Copiez-collez le contenu en texte.\nWe cannot open it. Please copy-paste the content as text. 📋",
-                sticker: "😄 Merci pour le sticker ! / Thanks for the sticker!\n\nUne question ? / A question? Nous sommes là ! / We're here! 🎓",
+                sticker: "😄 Merci pour le sticker ! / Thanks for the sticker!\n\nUne question ? Nous sommes là ! / A question? We're here! 🎓",
             };
             await sendFacebookMessage(senderId, replies[type] || replies.file);
             continue;
@@ -355,18 +295,16 @@ app.post('/webhook', async (req, res) => {
         const textLower = text.toLowerCase();
         console.log(`📩 [${senderId.slice(-4)}] ${text.substring(0, 60)}`);
 
-        // ===== COMMANDES ADMIN (avant détection langue) =====
+        // ===== COMMANDES ADMIN =====
         if (ADMIN_IDS.includes(senderId) && textLower.startsWith('admin')) {
             const uptime = Math.floor((Date.now() - adminStats.startTime) / 60000);
-            const statsMsg = `📊 STATISTIQUES ADMIN\n\n👥 Utilisateurs uniques: ${adminStats.totalUsers.size}\n💬 Messages totaux: ${adminStats.totalMessages}\n🎮 Quiz démarrés: ${adminStats.quizStarted}\n✅ Quiz terminés: ${adminStats.quizCompleted}\n🔄 Traductions: ${adminStats.translationsDone}\n⏱️ Uptime: ${uptime} min\n\n🌐 Langues:\n${Object.entries(adminStats.languagesDetected).map(([k, v]) => `- ${k}: ${v}`).join('\n')}`;
+            const statsMsg = `📊 STATISTIQUES ADMIN\n\n👥 Utilisateurs uniques: ${adminStats.totalUsers.size}\n💬 Messages totaux: ${adminStats.totalMessages}\n🎮 Quiz démarrés: ${adminStats.quizStarted}\n✅ Quiz terminés: ${adminStats.quizCompleted}\n⏱️ Uptime: ${uptime} min\n\n🌐 Langues:\n${Object.entries(adminStats.languagesDetected).map(([k, v]) => `- ${k}: ${v}`).join('\n')}`;
             await sendFacebookMessage(senderId, statsMsg);
             continue;
         }
 
         // ===== DETECTION LANGUE =====
         const detectedLang = detectLanguage(text);
-        const isSupported = detectedLang === 'french' || detectedLang === 'english';
-
         adminStats.languagesDetected[detectedLang] = (adminStats.languagesDetected[detectedLang] || 0) + 1;
 
         // ===== MENU / AIDE =====
@@ -375,92 +313,29 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // ===== STATS UTILISATEUR =====
+        // ===== STATS =====
         if (textLower === 'stats' || textLower === 'statistiques') {
             const quota = userQuotas[senderId];
             const history = getHistory(senderId);
             const statsMsg = (detectedLang === 'french' || detectedLang === 'unknown')
-                ? `📊 VOS STATISTIQUES\n\n💬 Messages échangés: ${history.filter(h => h.role === 'user').length}\n🎯 Mode: ${quota?.mode === 'test' ? 'TEST (gratuit)' : 'QUOTIDIEN'}\n📅 Messages restants aujourd'hui: ${quota ? (quota.mode === 'test' ? TEST_MODE_LIMIT - quota.count : DAILY_LIMIT - quota.count) : TEST_MODE_LIMIT}\n\n🎓 Continuez à apprendre ! 🚀`
-                : `📊 YOUR STATISTICS\n\n💬 Messages exchanged: ${history.filter(h => h.role === 'user').length}\n🎯 Mode: ${quota?.mode === 'test' ? 'TEST (free)' : 'DAILY'}\n📅 Messages left today: ${quota ? (quota.mode === 'test' ? TEST_MODE_LIMIT - quota.count : DAILY_LIMIT - quota.count) : TEST_MODE_LIMIT}\n\n🎓 Keep learning! 🚀`;
+                ? `📊 VOS STATISTIQUES\n\n💬 Messages: ${history.filter(h => h.role === 'user').length}\n🎯 Mode: ${quota?.mode === 'test' ? 'TEST' : 'QUOTIDIEN'}\n📅 Restants: ${quota ? (quota.mode === 'test' ? TEST_MODE_LIMIT - quota.count : DAILY_LIMIT - quota.count) : TEST_MODE_LIMIT}\n\n🎓 Continuez ! 🚀`
+                : `📊 YOUR STATISTICS\n\n💬 Messages: ${history.filter(h => h.role === 'user').length}\n🎯 Mode: ${quota?.mode === 'test' ? 'TEST' : 'DAILY'}\n📅 Left: ${quota ? (quota.mode === 'test' ? TEST_MODE_LIMIT - quota.count : DAILY_LIMIT - quota.count) : TEST_MODE_LIMIT}\n\n🎓 Keep going! 🚀`;
             await sendFacebookMessage(senderId, statsMsg);
             continue;
         }
 
-        // ===== COMMANDES EN FRANÇAIS (peut importe la langue détectée) =====
+        // ===== QUIZ =====
         if (textLower.includes('quiz français') || textLower.includes('quiz francais')) {
             adminStats.quizStarted++;
-            const q = startQuiz(senderId, 'fr');
-            await sendFacebookMessage(senderId, q);
+            await sendFacebookMessage(senderId, startQuiz(senderId, 'fr'));
             continue;
         }
-        if (textLower.includes('exercice français') || textLower.includes('exercice francais') || textLower.includes('pratique français')) {
-            const ex = exercicesFR[Math.floor(Math.random() * exercicesFR.length)];
-            await sendFacebookMessage(senderId, ex);
-            continue;
-        }
-
-        // ===== COMMANDES EN ANGLAIS =====
         if (textLower.includes('quiz english') || textLower.includes('quiz anglais')) {
             adminStats.quizStarted++;
-            const q = startQuiz(senderId, 'en');
-            await sendFacebookMessage(senderId, q);
-            continue;
-        }
-        if (textLower.includes('exercice english') || textLower.includes('exercise english') || textLower.includes('practice english')) {
-            const ex = exercicesEN[Math.floor(Math.random() * exercicesEN.length)];
-            await sendFacebookMessage(senderId, ex);
+            await sendFacebookMessage(senderId, startQuiz(senderId, 'en'));
             continue;
         }
 
-        // ===== CORRECTION =====
-        if (textLower.startsWith('corrige ') || textLower.startsWith('correction ') || textLower.startsWith('correct ')) {
-            const texteACorriger = text.substring(text.indexOf(' ') + 1).trim();
-            if (texteACorriger.length < 5) {
-                await sendFacebookMessage(senderId, "📝 Veuillez écrire le texte à corriger.\nExemple : CORRIGE je suis aller a l'ecole\n\n📝 Please write the text to correct.\nExample: CORRECT i goes to school");
-                continue;
-            }
-            await sendTyping(senderId);
-            const prompt = `Corrigez ce texte et expliquez chaque erreur en français : "${texteACorriger}"`;
-            addToHistory(senderId, 'user', prompt);
-            const correction = await getAIReply(prompt, senderId, 'french');
-            addToHistory(senderId, 'assistant', correction);
-            await sendFacebookMessage(senderId, correction);
-            continue;
-        }
-
-        // ===== RÉSUMÉ =====
-        if (textLower.startsWith('résumé ') || textLower.startsWith('resume ') || textLower.startsWith('summarize ') || textLower.startsWith('summary ')) {
-            const texteAResumer = text.substring(text.indexOf(' ') + 1).trim();
-            if (texteAResumer.length < 30) {
-                await sendFacebookMessage(senderId, "📄 Veuillez coller le texte à résumer.\nExemple : RÉSUMÉ [texte long...]\n\n📄 Please paste the text to summarize.\nExample: SUMMARIZE [long text...]");
-                continue;
-            }
-            await sendTyping(senderId);
-            const prompt = `Faites un résumé clair et concis de ce texte en français : "${texteAResumer}"`;
-            addToHistory(senderId, 'user', prompt);
-            const resume = await getAIReply(prompt, senderId, 'french');
-            addToHistory(senderId, 'assistant', resume);
-            await sendFacebookMessage(senderId, resume);
-            continue;
-        }
-
-        // ===== CONJUGAISON =====
-        if (textLower.startsWith('conjugue ') || textLower.startsWith('conjugate ')) {
-            const verbe = text.substring(text.indexOf(' ') + 1).trim();
-            if (!verbe) {
-                await sendFacebookMessage(senderId, "📝 Veuillez préciser le verbe.\nExemple : CONJUGUE être\n\n📝 Please specify the verb.\nExample: CONJUGATE be");
-                continue;
-            }
-            await sendTyping(senderId);
-            const prompt = `Conjuguez le verbe "${verbe}" à tous les temps principaux en français.`;
-            addToHistory(senderId, 'user', prompt);
-            const conjugaison = await getAIReply(prompt, senderId, 'french');
-            addToHistory(senderId, 'assistant', conjugaison);
-            await sendFacebookMessage(senderId, conjugaison);
-            continue;
-        }
-
-        // Réponse quiz en cours
         if (quizSessions[senderId]) {
             const result = checkQuizAnswer(senderId, text);
             if (result) {
@@ -470,69 +345,102 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // ===== QUOTA =====
-        const quota = checkQuota(senderId);
-        if (!quota.allowed) {
-            const msg = (detectedLang === 'french' || detectedLang === 'unknown')
-                ? `⚠️ Limite quotidienne atteinte.\n\nVous avez utilisé vos ${DAILY_LIMIT} messages aujourd'hui. 📊\n\n🔄 Revenez demain pour continuer !\n\n📌 Abonnez-vous à la page pour rester informé(e). 😊`
-                : `⚠️ Daily limit reached.\n\nYou've used your ${DAILY_LIMIT} messages today. 📊\n\n🔄 Come back tomorrow!\n\n📌 Follow our page to stay updated. 😊`;
-            await sendFacebookMessage(senderId, msg);
+        // ===== EXERCICES =====
+        if (textLower.includes('exercice français') || textLower.includes('exercice francais') || textLower.includes('pratique français')) {
+            await sendFacebookMessage(senderId, exercicesFR[Math.floor(Math.random() * exercicesFR.length)]);
+            continue;
+        }
+        if (textLower.includes('exercice english') || textLower.includes('exercise english') || textLower.includes('practice english')) {
+            await sendFacebookMessage(senderId, exercicesEN[Math.floor(Math.random() * exercicesEN.length)]);
             continue;
         }
 
-        if (quota.mode === 'test' && quota.remaining === 0) {
-            const msg = (detectedLang === 'french' || detectedLang === 'unknown')
-                ? `🎉 Félicitations ! Vous avez utilisé vos ${TEST_MODE_LIMIT} messages TEST !\n\n🔄 Vous passez en mode QUOTIDIEN : ${DAILY_LIMIT} messages par jour. 🚀`
-                : `🎉 Congratulations! You've used your ${TEST_MODE_LIMIT} TEST messages!\n\n🔄 Switching to DAILY mode: ${DAILY_LIMIT} messages per day. 🚀`;
-            await sendFacebookMessage(senderId, msg);
-        }
-
-        // ===== AI REPLY AVEC TRADUCTION SI NÉCESSAIRE =====
-        if (isSupported) {
-            // Langue supportée directement
-            await sendTyping(senderId);
-            addToHistory(senderId, 'user', text);
-            const aiReply = await getAIReply(text, senderId, detectedLang);
-            addToHistory(senderId, 'assistant', aiReply);
-            await sendFacebookMessage(senderId, aiReply);
-        } else {
-            // Traduction automatique
-            adminStats.translationsDone++;
-            const targetLang = 'fr';
-            const translated = await translateText(text, targetLang);
-
-            if (translated) {
-                await sendFacebookMessage(senderId, `🔄 *Traduction automatique*\n\nVotre message a été traduit en français.\n\n📩 *Original :* "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"\n\n📝 *Traduction :* "${translated}"\n\n⏳ Préparation de votre réponse...`);
-
-                await sendTyping(senderId);
-                addToHistory(senderId, 'user', `[Langue: ${detectedLang}] ${text}\n[Traduit: ${translated}]`);
-                const aiReply = await getAIReply(translated, senderId, 'french');
-                addToHistory(senderId, 'assistant', aiReply);
-
-                const langCode = getLangCode(detectedLang);
-                const replyTranslated = await translateText(aiReply, langCode);
-
-                const finalReply = replyTranslated
-                    ? `📝 *Réponse*\n\n${replyTranslated}\n\n---\n📖 *Version originale (français) :*\n${aiReply}`
-                    : aiReply;
-
-                await sendFacebookMessage(senderId, finalReply);
-            } else {
-                await sendFacebookMessage(senderId, "❌ *Erreur de traduction*\n\nNous n'avons pas pu traduire votre message. Veuillez réessayer en Français ou en Anglais. 🙏");
+        // ===== CORRECTION =====
+        if (textLower.startsWith('corrige ') || textLower.startsWith('correction ') || textLower.startsWith('correct ')) {
+            const txt = text.substring(text.indexOf(' ') + 1).trim();
+            if (txt.length < 5) {
+                await sendFacebookMessage(senderId, "📝 Veuillez écrire le texte à corriger.\nEx: CORRIGE je suis aller a l'ecole");
+                continue;
             }
+            await sendTyping(senderId);
+            const prompt = `Corrige ce texte et explique chaque erreur : "${txt}"`;
+            addToHistory(senderId, 'user', prompt);
+            const reply = await getAIReply(prompt, senderId);
+            addToHistory(senderId, 'assistant', reply);
+            await sendFacebookMessage(senderId, reply);
+            continue;
         }
+
+        // ===== RÉSUMÉ =====
+        if (textLower.startsWith('résumé ') || textLower.startsWith('resume ') || textLower.startsWith('summarize ') || textLower.startsWith('summary ')) {
+            const txt = text.substring(text.indexOf(' ') + 1).trim();
+            if (txt.length < 30) {
+                await sendFacebookMessage(senderId, "📄 Veuillez coller le texte à résumer.\nEx: RÉSUMÉ [texte long...]");
+                continue;
+            }
+            await sendTyping(senderId);
+            const prompt = `Fais un résumé clair et concis de ce texte : "${txt}"`;
+            addToHistory(senderId, 'user', prompt);
+            const reply = await getAIReply(prompt, senderId);
+            addToHistory(senderId, 'assistant', reply);
+            await sendFacebookMessage(senderId, reply);
+            continue;
+        }
+
+        // ===== CONJUGAISON =====
+        if (textLower.startsWith('conjugue ') || textLower.startsWith('conjugate ')) {
+            const verbe = text.substring(text.indexOf(' ') + 1).trim();
+            if (!verbe) {
+                await sendFacebookMessage(senderId, "📝 Précisez le verbe.\nEx: CONJUGUE être");
+                continue;
+            }
+            await sendTyping(senderId);
+            const prompt = `Conjugue le verbe "${verbe}" à tous les temps principaux.`;
+            addToHistory(senderId, 'user', prompt);
+            const reply = await getAIReply(prompt, senderId);
+            addToHistory(senderId, 'assistant', reply);
+            await sendFacebookMessage(senderId, reply);
+            continue;
+        }
+
+        // ===== QUOTA =====
+        const quota = checkQuota(senderId);
+        if (!quota.allowed) {
+            await sendFacebookMessage(senderId, `⚠️ Limite quotidienne atteinte.\n\nVous avez utilisé vos ${DAILY_LIMIT} messages aujourd'hui.\n\n🔄 Revenez demain !\n📌 Abonnez-vous à la page. 😊`);
+            continue;
+        }
+        if (quota.mode === 'test' && quota.remaining === 0) {
+            await sendFacebookMessage(senderId, `🎉 Bravo ! Vous avez utilisé vos ${TEST_MODE_LIMIT} messages TEST !\n\n🔄 Mode QUOTIDIEN activé : ${DAILY_LIMIT} messages/jour. 🚀`);
+        }
+        if (quota.mode === 'daily' && quota.remaining === 0) {
+            await sendFacebookMessage(senderId, "ℹ️ Dernier message gratuit aujourd'hui. À demain ! 📅");
+        }
+
+        // ===== AI REPLY (MULTILINGUE DIRECT) =====
+        await sendTyping(senderId);
+        addToHistory(senderId, 'user', text);
+        const aiReply = await getAIReply(text, senderId);
+        addToHistory(senderId, 'assistant', aiReply);
+        await sendFacebookMessage(senderId, aiReply);
     }
 });
 
-// ========== AI REPLY ==========
-async function getAIReply(userMessage, senderId, lang) {
+// ========== AI REPLY (MULTILINGUE) ==========
+async function getAIReply(userMessage, senderId) {
     try {
         const history = getHistory(senderId);
-        const systemPrompt = `Vous êtes l'assistant IA officiel de la page "Ofisialy Sylvain", créée par Sylvain Solofoniaina le 01 Mai 2026. Vous répondez en FRANÇAIS (sauf si l'utilisateur écrit en anglais).
+        const systemPrompt = `Vous êtes l'assistant IA officiel de la page "Ofisialy Sylvain", créée par Sylvain Solofoniaina le 01 Mai 2026.
 
 🎯 RÔLE : Assistant pédagogique expert en FRANÇAIS et ANGLAIS.
 
-📋 COMPÉTENCES PRINCIPALES :
+🌐 LANGUES : Vous comprenez et parlez TOUTES les langues. Répondez TOUJOURS dans LA MÊME LANGUE que l'utilisateur, quelle qu'elle soit.
+
+⚠️ IMPORTANT : Si l'utilisateur écrit dans une langue autre que le Français ou l'Anglais, répondez dans sa langue mais rappelez poliment que :
+- Vos COMPÉTENCES D'ENSEIGNEMENT sont spécialisées en FRANÇAIS et ANGLAIS.
+- Vous pouvez néanmoins DISCUTER et RÉPONDRE À TOUTES LES QUESTIONS dans toutes les langues.
+- Proposez de passer en Français ou Anglais pour les exercices et quiz.
+
+📋 COMPÉTENCES :
 - Grammaire, conjugaison, orthographe, vocabulaire
 - Synonymes, antonymes, homophones
 - Compréhension de texte, résumé, analyse
@@ -541,26 +449,17 @@ async function getAIReply(userMessage, senderId, lang) {
 - Exercices pratiques et corrections détaillées
 - Figures de style, littérature, auteurs
 - Expressions idiomatiques, proverbes
-- Phonétique (description écrite uniquement)
 
 📋 RÈGLES :
-- Vouvoyez TOUJOURS.
-- PAS de Markdown — Messenger ne supporte pas.
-- Utilisez des MAJUSCULES pour les titres.
+- Vouvoyez en français, soyez poli dans toutes les langues.
+- PAS de Markdown. Utilisez des MAJUSCULES pour les titres.
 - Émojis avec modération.
-- Réponses courtes et claires.
-- Proposez toujours un exercice ou une question de suivi.
-- Encouragez et motivez l'apprenant.
-- Compétences : UNIQUEMENT Français et Anglais. Pour les autres langues, la traduction est automatique, mais l'apprentissage se limite au FR et EN.
+- Réponses courtes et claires (max 300 mots).
+- Proposez toujours une action ou un exercice.
+- Encouragez l'apprenant.
 
 🚫 LIMITES : Pas d'images, fichiers, vidéos, audio.
-📞 Contact Sylvain : via la page Facebook officielle.`;
-
-        const messages = [
-            { role: 'system', content: systemPrompt },
-            ...history.slice(-8),
-            { role: 'user', content: userMessage }
-        ];
+📞 Contact Sylvain : via la page Facebook.`;
 
         const response = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
@@ -568,7 +467,11 @@ async function getAIReply(userMessage, senderId, lang) {
                 model: AI_MODEL,
                 max_tokens: 500,
                 temperature: 0.6,
-                messages
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    ...history.slice(-8),
+                    { role: 'user', content: userMessage }
+                ]
             },
             {
                 headers: {
@@ -583,10 +486,10 @@ async function getAIReply(userMessage, senderId, lang) {
         return response.data.choices[0].message.content;
     } catch (error) {
         console.error('❌ AI Error:', error.message);
-        if (error.response?.status === 402) return "🔧 Maintenance en cours. Revenez dans quelques heures. 🙏\n🔧 Maintenance in progress. Please come back in a few hours. 🙏";
-        if (error.response?.status === 429) return "⏳ Trop de demandes. Réessayez dans quelques minutes. 🙏\n⏳ Too many requests. Please try again in a few minutes. 🙏";
-        if (error.code === 'ECONNABORTED') return "⏳ Délai dépassé. Reformulez votre question plus brièvement.\n⏳ Timeout. Please rephrase your question more briefly.";
-        return "🔧 Erreur temporaire. Veuillez réessayer. 🙏\n🔧 Temporary error. Please try again. 🙏";
+        if (error.response?.status === 402) return "🔧 Maintenance en cours. Revenez dans quelques heures. 🙏";
+        if (error.response?.status === 429) return "⏳ Trop de demandes. Réessayez dans quelques minutes. 🙏";
+        if (error.code === 'ECONNABORTED') return "⏳ Délai dépassé. Reformulez plus brièvement.";
+        return "🔧 Erreur temporaire. Veuillez réessayer. 🙏";
     }
 }
 
@@ -594,8 +497,7 @@ async function getAIReply(userMessage, senderId, lang) {
 async function sendFacebookMessage(recipientId, text) {
     try {
         await axios.post(
-            `https://graph.facebook.com/v19.
-0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+            `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
             { recipient: { id: recipientId }, message: { text } }
         );
         console.log('✅ Sent');

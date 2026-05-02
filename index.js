@@ -7,6 +7,7 @@ app.use(express.json());
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "ofisialysylvain-2024";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+const PAGE_ID = process.env.PAGE_ID || "1083011031566013";
 const AI_MODEL = "openai/gpt-oss-120b:free";
 
 // ========== API KEY ROTATION ==========
@@ -107,11 +108,6 @@ function getFollowMessage(lang, type) {
             en: `🎉 *Welcome to Ofisialy Sylvain!*\n\nWe're happy to have you here! 😊\n\n📌 *Follow our page* for daily free tips and exercises.\n\n👍 *Like, comment, share* — your support helps us reach more learners!\n\n🚀 Let's start! How can I help you?`,
             other: `🎉 *Welcome / Bienvenue !*\n\n📌 *Follow / Abonnez-vous* à Ofisialy Sylvain pour apprendre le Français et l'Anglais !\n\n👍 *Like, comment, share / Likez, commentez, partagez* — votre soutien compte ! 🚀`
         },
-        'thankyou': {
-            fr: `🙏 *Merci pour votre visite !*\n\nSi notre assistance vous a été utile :\n👍 *Likez* la page\n💬 *Commentez* pour nous encourager\n🔄 *Partagez* avec vos amis\n📌 *Abonnez-vous* pour rester informé(e)\n\nÀ bientôt ! 😊`,
-            en: `🙏 *Thank you for visiting!*\n\nIf our help was useful:\n👍 *Like* our page\n💬 *Comment* to encourage us\n🔄 *Share* with your friends\n📌 *Follow* to stay updated\n\nSee you soon! 😊`,
-            other: `🙏 *Thank you / Merci !*\n\n👍 *Like / Likez* | 💬 *Comment / Commentez* | 🔄 *Share / Partagez* | 📌 *Follow / Abonnez-vous*\n\nSee you soon / À bientôt ! 😊`
-        },
         'reminder': {
             fr: `📌 *Rappel amical !*\n\nCela fait un moment que nous n'avons pas échangé. 😊\n\nSi notre page vous plaît :\n👍 *Likez* pour nous soutenir\n💬 *Commentez* pour donner votre avis\n🔄 *Partagez* avec 3 amis qui apprennent le Français ou l'Anglais\n📌 *Abonnez-vous* pour ne rien manquer\n\n🚀 Revenez quand vous voulez — nous sommes là 24h/24 !`,
             en: `📌 *Friendly reminder!*\n\nIt's been a while since we last chatted. 😊\n\nIf you like our page:\n👍 *Like* to support us\n💬 *Comment* to share your thoughts\n🔄 *Share* with 3 friends learning French or English\n📌 *Follow* to stay updated\n\n🚀 Come back anytime — we're here 24/7!`,
@@ -169,13 +165,13 @@ function checkQuizAnswer(senderId, userAnswer) {
         delete quizSessions[senderId];
         const stars = session.attempts === 1 ? "⭐⭐⭐" : session.attempts === 2 ? "⭐⭐" : "⭐";
         return session.lang === 'fr'
-            ? `✅ BRAVO ! Bonne réponse ! ${stars}\n\nLa réponse était : "${q.answer[0]}"\n\n🔄 Tapez QUIZ FRANÇAIS pour un autre ou QUIZ ANGLAIS pour changer !`
-            : `✅ CORRECT! Well done! ${stars}\n\nThe answer was: "${q.answer[0]}"\n\n🔄 Type QUIZ ENGLISH for another or QUIZ FRANÇAIS to switch!`;
+            ? `✅ BRAVO ! Bonne réponse ! ${stars}\n\nLa réponse était : "${q.answer[0]}"\n\n🔄 Tapez QUIZ FRANÇAIS pour un autre ou QUIZ ANGLAIS pour changer !\n\n📌 Suivez notre page pour plus de quiz ! 👍`
+            : `✅ CORRECT! Well done! ${stars}\n\nThe answer was: "${q.answer[0]}"\n\n🔄 Type QUIZ ENGLISH for another or QUIZ FRANÇAIS to switch!\n\n📌 Follow our page for more quizzes! 👍`;
     } else if (session.attempts >= 2) {
         delete quizSessions[senderId];
         return session.lang === 'fr'
-            ? `❌ Pas tout à fait...\n\n✅ La bonne réponse était : "${q.answer[0]}"\n\n💪 Ne vous découragez pas ! Tapez QUIZ FRANÇAIS pour réessayer !`
-            : `❌ Not quite...\n\n✅ The correct answer was: "${q.answer[0]}"\n\n💪 Don't give up! Type QUIZ ENGLISH to try again!`;
+            ? `❌ Pas tout à fait...\n\n✅ La bonne réponse était : "${q.answer[0]}"\n\n💪 Ne vous découragez pas ! Tapez QUIZ FRANÇAIS pour réessayer !\n\n📌 Suivez-nous pour continuer à apprendre ! 😊`
+            : `❌ Not quite...\n\n✅ The correct answer was: "${q.answer[0]}"\n\n💪 Don't give up! Type QUIZ ENGLISH to try again!\n\n📌 Follow us to keep learning! 😊`;
     } else {
         return session.lang === 'fr'
             ? `🤔 Pas tout à fait... Essayez encore !\n\n💡 Indice : ${q.hint}`
@@ -206,6 +202,7 @@ const adminStats = {
     quizCompleted: 0,
     languagesDetected: {},
     followRequests: 0,
+    commentsReplied: 0,
     startTime: Date.now()
 };
 
@@ -322,6 +319,34 @@ app.post('/webhook', async (req, res) => {
 
     res.status(200).send('EVENT_RECEIVED');
 
+    // ===== GÉRER LES COMMENTAIRES (feed) =====
+    if (body.entry[0]?.changes) {
+        for (const change of body.entry[0].changes) {
+            if (change.field === 'feed' && change.value?.item === 'comment') {
+                const commentId = change.value.comment_id;
+                const senderId = change.value.from?.id;
+                const senderName = change.value.from?.name || '';
+                const commentMessage = change.value.message;
+
+                // Aza mamaly ny tena (bot na admin)
+                if (!senderId || ADMIN_IDS.includes(senderId) || senderId === PAGE_ID) {
+                    console.log('⏭️ Commentaire ignoré (admin/page/self)');
+                    continue;
+                }
+
+                if (!commentMessage) continue;
+
+                console.log(`💬 Commentaire de ${senderName} (${senderId}): ${commentMessage?.substring(0, 60)}`);
+
+                const reply = await generateCommentReply(commentMessage, senderName);
+                await replyToComment(commentId, reply);
+                adminStats.commentsReplied++;
+            }
+        }
+        return;
+    }
+
+    // ===== GÉRER LES MESSAGES =====
     for (const entry of body.entry) {
         const event = entry.messaging[0];
         if (!event) continue;
@@ -332,7 +357,6 @@ app.post('/webhook', async (req, res) => {
         adminStats.totalMessages++;
         adminStats.totalUsers.add(senderId);
 
-        // Check inactivity
         const wasInactive = checkInactivity(senderId);
 
         // Attachments
@@ -355,19 +379,18 @@ app.post('/webhook', async (req, res) => {
         const textLower = text.toLowerCase();
         console.log(`📩 [${senderId.slice(-4)}] ${text.substring(0, 60)}`);
 
-        // ===== COMMANDES ADMIN =====
+        // Commandes Admin
         if (ADMIN_IDS.includes(senderId) && textLower.startsWith('admin')) {
             const uptime = Math.floor((Date.now() - adminStats.startTime) / 60000);
-            const statsMsg = `📊 STATISTIQUES ADMIN\n\n👥 Utilisateurs uniques: ${adminStats.totalUsers.size}\n💬 Messages totaux: ${adminStats.totalMessages}\n🎮 Quiz démarrés: ${adminStats.quizStarted}\n✅ Quiz terminés: ${adminStats.quizCompleted}\n📢 Follow requests: ${adminStats.followRequests}\n⏱️ Uptime: ${uptime} min\n\n🌐 Langues:\n${Object.entries(adminStats.languagesDetected).map(([k, v]) => `- ${k}: ${v}`).join('\n')}`;
+            const statsMsg = `📊 STATISTIQUES ADMIN\n\n👥 Utilisateurs uniques: ${adminStats.totalUsers.size}\n💬 Messages totaux: ${adminStats.totalMessages}\n💬 Commentaires répondus: ${adminStats.commentsReplied}\n🎮 Quiz démarrés: ${adminStats.quizStarted}\n✅ Quiz terminés: ${adminStats.quizCompleted}\n📢 Follow requests: ${adminStats.followRequests}\n⏱️ Uptime: ${uptime} min\n\n🌐 Langues:\n${Object.entries(adminStats.languagesDetected).map(([k, v]) => `- ${k}: ${v}`).join('\n')}`;
             await sendFacebookMessage(senderId, statsMsg);
             continue;
         }
 
-        // ===== DETECTION LANGUE =====
         const detectedLang = detectLanguage(text);
         adminStats.languagesDetected[detectedLang] = (adminStats.languagesDetected[detectedLang] || 0) + 1;
 
-        // ===== INACTIVITY REMINDER =====
+        // Inactivity reminder
         if (wasInactive && conversationHistory[senderId] && conversationHistory[senderId].length > 2) {
             const reminder = getFollowMessage(detectedLang, 'reminder');
             await sendFacebookMessage(senderId, reminder);
@@ -375,7 +398,7 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // ===== PREMIER CONTACT — WELCOME =====
+        // Premier contact
         if (!conversationHistory[senderId] || conversationHistory[senderId].length === 0) {
             const welcomeMsg = getFollowMessage(detectedLang, 'welcome');
             await sendFacebookMessage(senderId, welcomeMsg);
@@ -383,13 +406,13 @@ app.post('/webhook', async (req, res) => {
             addToHistory(senderId, 'assistant', welcomeMsg);
         }
 
-        // ===== MENU / AIDE =====
+        // Menu
         if (['menu', 'aide', 'help', 'start', 'bonjour', 'hello', 'salut', 'hi', 'bonsoir'].some(w => textLower === w || textLower.startsWith(w + ' '))) {
             await sendFacebookMessage(senderId, getMainMenu(detectedLang === 'french' ? 'fr' : 'en'));
             continue;
         }
 
-        // ===== STATS =====
+        // Stats
         if (textLower === 'stats' || textLower === 'statistiques') {
             const quota = userQuotas[senderId];
             const history = getHistory(senderId);
@@ -400,7 +423,7 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // ===== QUIZ =====
+        // Quiz
         if (textLower.includes('quiz français') || textLower.includes('quiz francais')) {
             adminStats.quizStarted++;
             await sendFacebookMessage(senderId, startQuiz(senderId, 'fr'));
@@ -411,7 +434,6 @@ app.post('/webhook', async (req, res) => {
             await sendFacebookMessage(senderId, startQuiz(senderId, 'en'));
             continue;
         }
-
         if (quizSessions[senderId]) {
             const result = checkQuizAnswer(senderId, text);
             if (result) {
@@ -421,7 +443,7 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // ===== EXERCICES =====
+        // Exercices
         if (textLower.includes('exercice français') || textLower.includes('exercice francais') || textLower.includes('pratique français')) {
             await sendFacebookMessage(senderId, exercicesFR[Math.floor(Math.random() * exercicesFR.length)]);
             continue;
@@ -431,7 +453,7 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // ===== CORRECTION =====
+        // Correction
         if (textLower.startsWith('corrige ') || textLower.startsWith('correction ') || textLower.startsWith('correct ')) {
             const txt = text.substring(text.indexOf(' ') + 1).trim();
             if (txt.length < 5) {
@@ -446,7 +468,7 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // ===== RÉSUMÉ =====
+        // Résumé
         if (textLower.startsWith('résumé ') || textLower.startsWith('resume ') || textLower.startsWith('summarize ') || textLower.startsWith('summary ')) {
             const txt = text.substring(text.indexOf(' ') + 1).trim();
             if (txt.length < 30) {
@@ -461,7 +483,7 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // ===== CONJUGAISON =====
+        // Conjugaison
         if (textLower.startsWith('conjugue ') || textLower.startsWith('conjugate ')) {
             const verbe = text.substring(text.indexOf(' ') + 1).trim();
             if (!verbe) {
@@ -476,10 +498,10 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // ===== QUOTA =====
+        // Quota
         const quota = checkQuota(senderId);
         if (!quota.allowed) {
-            await sendFacebookMessage(senderId, `⚠️ Limite quotidienne atteinte.\n\nVous avez utilisé vos ${DAILY_LIMIT} messages aujourd'hui.\n\n🔄 Revenez demain !\n📌 Abonnez-vous à la page. 😊`);
+            await sendFacebookMessage(senderId, `⚠️ Limite quotidienne atteinte.\n\nVous avez utilisé vos ${DAILY_LIMIT} messages aujourd'hui.\n\n🔄 Revenez demain !\n📌 Abonnez-vous à la page pour rester informé(e). 😊`);
             continue;
         }
         if (quota.mode === 'test' && quota.remaining === 0) {
@@ -489,7 +511,7 @@ app.post('/webhook', async (req, res) => {
             await sendFacebookMessage(senderId, "ℹ️ Dernier message gratuit aujourd'hui. À demain ! 📅");
         }
 
-        // ===== AI REPLY =====
+        // AI Reply
         await sendTyping(senderId);
         addToHistory(senderId, 'user', text);
         const aiReply = await getAIReply(text, senderId);
@@ -497,6 +519,65 @@ app.post('/webhook', async (req, res) => {
         await sendFacebookMessage(senderId, aiReply);
     }
 });
+
+// ========== RÉPONSE COMMENTAIRES AUTOMATIQUE ==========
+async function replyToComment(commentId, message) {
+    try {
+        await axios.post(
+            `https://graph.facebook.com/v19.0/${commentId}/comments`,
+            { message, access_token: PAGE_ACCESS_TOKEN }
+        );
+        console.log('✅ Réponse commentaire envoyée');
+    } catch (error) {
+        console.error('❌ Erreur réponse commentaire:', error.message);
+    }
+}
+
+async function generateCommentReply(userComment, userName = '') {
+    const name = userName ? ` ${userName}` : '';
+    const prompt = `Un utilisateur${name} a commenté sur notre page éducative "Ofisialy Sylvain".
+
+Son commentaire : "${userComment}"
+
+Tu es le community manager de la page. Générez une réponse :
+- CHALEUREUSE et PROFESSIONNELLE (vouvoiement)
+- Remercie la personne pour son commentaire
+- Fais référence au contenu de son commentaire si pertinent
+- Invite-la à découvrir notre assistant IA sur Messenger (m.me/OfisialySylvain) pour apprendre le Français et l'Anglais
+- Rappelle que la page propose des quiz, exercices, et corrections gratuits
+- Termine par une note positive et encourageante
+- 3-4 phrases maximum
+- En français UNIQUEMENT
+- PAS de Markdown
+- Utilise UN ou DEUX emojis maximum`;
+
+    try {
+        const currentKey = getApiKey();
+        const response = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+                model: AI_MODEL,
+                max_tokens: 200,
+                temperature: 0.7,
+                messages: [{ role: 'user', content: prompt }]
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${currentKey}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://ofisialysylvain.com',
+                    'X-Title': 'Ofisialy Sylvain Bot'
+                },
+                timeout: 15000
+            }
+        );
+        const reply = response.data.choices[0]?.message?.content;
+        return reply || "Merci beaucoup pour votre commentaire ! Nous sommes ravis de vous compter parmi notre communauté d'apprenants. N'hésitez pas à découvrir notre assistant IA gratuit sur Messenger pour progresser en Français et en Anglais. 🎓✨";
+    } catch (error) {
+        console.error('❌ Erreur génération réponse commentaire:', error.message);
+        return "Merci beaucoup pour votre commentaire ! Nous sommes ravis de vous compter parmi notre communauté d'apprenants. N'hésitez pas à découvrir notre assistant IA gratuit sur Messenger pour progresser en Français et en Anglais. 🎓✨";
+    }
+}
 
 // ========== AI REPLY WITH API KEY ROTATION ==========
 async function getAIReply(userMessage, senderId) {
@@ -523,8 +604,6 @@ async function getAIReply(userMessage, senderId) {
 📢 À la fin de chaque réponse, ajoutez UNE phrase d'encouragement à suivre/liker/partager la page.
 
 🚫 LIMITES : Pas d'images, fichiers, vidéos, audio.`;
-
-    let lastError = null;
 
     for (let attempt = 0; attempt < API_KEYS.length; attempt++) {
         const currentKey = getApiKey();
@@ -557,7 +636,6 @@ async function getAIReply(userMessage, senderId) {
             return response.data.choices[0].message.content;
 
         } catch (error) {
-            lastError = error;
             console.warn(`⚠️ Erreur clé #${currentKeyIndex + 1}: ${error.response?.status || error.message}`);
 
             if (error.response?.status === 402 || error.response?.status === 429) {
@@ -571,7 +649,6 @@ async function getAIReply(userMessage, senderId) {
         }
     }
 
-    console.error('❌ Toutes les clés ont échoué:', lastError?.message);
     return "🔧 Service momentanément indisponible. Merci de réessayer dans quelques instants. 🙏";
 }
 

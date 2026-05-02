@@ -23,9 +23,29 @@ if (!OPENROUTER_API_KEY) {
 
 const AI_MODEL = "openai/gpt-4o-mini-search-preview";
 
+// ========== SUPPORTED TEACHING LANGUAGES ==========
+const SUPPORTED_TEACHING_LANGS = ['french', 'english', 'fr', 'en'];
+
+// ========== LANGUAGE RESTRICTION MESSAGES ==========
+const languageRestrictionMessages = {
+    spanish: "¡Hola! Nuestras competencias de enseñanza son solo en FRANCÉS e INGLÉS. ¿Puedes escribir en francés o inglés para que te ayudemos? 🙏",
+    arabic: "مرحبا! تقتصر مهاراتنا التعليمية على الفرنسية والإنجليزية. هل يمكنك الكتابة بالفرنسية أو الإنجليزية؟ 🙏",
+    russian: "Привет! Наши учебные навыки доступны только на французском и английском языках. Можете ли вы писать на французском или английском? 🙏",
+    chinese: "你好！我们的教学能力只支持法语和英语。您能用法语或英语写吗？🙏",
+    japanese: "こんにちは！私たちの教育スキルはフランス語と英語のみです。フランス語または英語で書いていただけますか？🙏",
+    korean: "안녕하세요! 저는 프랑스어와 영어만 가르칠 수 있습니다. 프랑스어나 영어로 질문해 주시면 기꺼이 도와드리겠습니다! 🙏",
+    portuguese: "Olá! Nossas competências de ensino são apenas em FRANCÊS e INGLÊS. Você pode escrever em francês ou inglês para que possamos ajudá-lo? 🙏",
+    italian: "Ciao! Le nostre competenze didattiche sono solo in FRANCESE e INGLESE. Puoi scrivere in francese o inglese per aiutarti? 🙏",
+    german: "Hallo! Unsere Lehrfähigkeiten sind nur auf Französisch und Englisch. Können Sie auf Französisch oder Englisch schreiben? 🙏",
+    dutch: "Hallo! Onze onderwijsvaardigheden zijn alleen in FRANS en ENGELS. Kunt u in het Frans of Engels schrijven? 🙏",
+    portuguese_br: "Olá! Nossas competências de ensino são apenas em FRANCÊS e INGLÊS. Você pode escrever em francês ou inglês para que possamos ajudá-lo? 🙏",
+    malagasy: "Salama! Ny aming fahaizan-kody ara-masina dia Frantsay sy Anglisy fotsiny. Avy eo moa ianao raha mahafady hanorata amin'ny Frantsay na anglisy? 🙏",
+    unknown: "Hello! Our teaching expertise is in FRENCH and ENGLISH only. Can you write in French or English so we can help you? 🙏"
+};
+
 // ========== QUOTAS ==========
 const userQuotas = {};
-const userLanguageCache = {}; // OPTIMIZATION: Cache language detection
+const userLanguageCache = {};
 const TEST_MODE_LIMIT = 20;
 const DAILY_LIMIT = 10;
 const dailyReset = {};
@@ -33,7 +53,6 @@ const dailyReset = {};
 function checkQuota(senderId) {
     const today = new Date().toDateString();
     
-    // IMPROVED: Reset quota at start of day
     if (dailyReset[senderId] !== today) {
         dailyReset[senderId] = today;
         if (userQuotas[senderId]) {
@@ -75,7 +94,6 @@ function addToHistory(senderId, role, content) {
     if (!conversationHistory[senderId]) conversationHistory[senderId] = [];
     conversationHistory[senderId].push({ role, content });
     
-    // IMPROVED: Clean up history immediately when it exceeds limit
     if (conversationHistory[senderId].length > MAX_HISTORY * 2) {
         conversationHistory[senderId] = conversationHistory[senderId].slice(-MAX_HISTORY * 2);
     }
@@ -211,6 +229,17 @@ function detectLanguage(text) {
     return 'unknown';
 }
 
+// ========== CHECK IF LANGUAGE SUPPORTS TEACHING ==========
+function isSupportedTeachingLanguage(lang) {
+    return SUPPORTED_TEACHING_LANGS.includes(lang.toLowerCase());
+}
+
+// ========== HANDLE NON-SUPPORTED TEACHING LANGUAGES ==========
+async function handleNonSupportedLanguage(senderId, detectedLang) {
+    const message = languageRestrictionMessages[detectedLang] || languageRestrictionMessages['unknown'];
+    await sendFacebookMessage(senderId, message);
+}
+
 // ========== MENU PRINCIPAL ==========
 function getMainMenu(lang) {
     if (lang === 'fr' || lang === 'french') {
@@ -327,10 +356,10 @@ app.post('/webhook', async (req, res) => {
         }
 
         // ===== DETECTION LANGUE =====
-        let detectedLang = userLanguageCache[senderId]; // OPTIMIZATION: Use cached language
+        let detectedLang = userLanguageCache[senderId];
         if (!detectedLang) {
             detectedLang = detectLanguage(text);
-            userLanguageCache[senderId] = detectedLang; // Cache it
+            userLanguageCache[senderId] = detectedLang;
         }
         adminStats.languagesDetected[detectedLang] = (adminStats.languagesDetected[detectedLang] || 0) + 1;
 
@@ -351,13 +380,21 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // ===== QUIZ =====
+        // ===== QUIZ - CHECK LANGUAGE SUPPORT =====
         if (textLower.includes('quiz français') || textLower.includes('quiz francais')) {
+            if (!isSupportedTeachingLanguage(detectedLang)) {
+                await handleNonSupportedLanguage(senderId, detectedLang);
+                continue;
+            }
             adminStats.quizStarted++;
             await sendFacebookMessage(senderId, startQuiz(senderId, 'fr'));
             continue;
         }
         if (textLower.includes('quiz english') || textLower.includes('quiz anglais')) {
+            if (!isSupportedTeachingLanguage(detectedLang)) {
+                await handleNonSupportedLanguage(senderId, detectedLang);
+                continue;
+            }
             adminStats.quizStarted++;
             await sendFacebookMessage(senderId, startQuiz(senderId, 'en'));
             continue;
@@ -372,18 +409,30 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // ===== EXERCICES =====
+        // ===== EXERCICES - CHECK LANGUAGE SUPPORT =====
         if (textLower.includes('exercice français') || textLower.includes('exercice francais') || textLower.includes('pratique français')) {
+            if (!isSupportedTeachingLanguage(detectedLang)) {
+                await handleNonSupportedLanguage(senderId, detectedLang);
+                continue;
+            }
             await sendFacebookMessage(senderId, exercicesFR[Math.floor(Math.random() * exercicesFR.length)]);
             continue;
         }
         if (textLower.includes('exercice english') || textLower.includes('exercise english') || textLower.includes('practice english')) {
+            if (!isSupportedTeachingLanguage(detectedLang)) {
+                await handleNonSupportedLanguage(senderId, detectedLang);
+                continue;
+            }
             await sendFacebookMessage(senderId, exercicesEN[Math.floor(Math.random() * exercicesEN.length)]);
             continue;
         }
 
-        // ===== CORRECTION =====
+        // ===== CORRECTION - CHECK LANGUAGE SUPPORT =====
         if (textLower.startsWith('corrige ') || textLower.startsWith('correction ') || textLower.startsWith('correct ')) {
+            if (!isSupportedTeachingLanguage(detectedLang)) {
+                await handleNonSupportedLanguage(senderId, detectedLang);
+                continue;
+            }
             const txt = text.substring(text.indexOf(' ') + 1).trim();
             if (txt.length < 5) {
                 await sendFacebookMessage(senderId, "📝 Veuillez écrire le texte à corriger.\nEx: CORRIGE je suis aller a l'ecole");
@@ -392,14 +441,18 @@ app.post('/webhook', async (req, res) => {
             await sendTyping(senderId);
             const prompt = `Corrige ce texte et explique chaque erreur : "${txt}"`;
             addToHistory(senderId, 'user', prompt);
-            const reply = await getAIReply(prompt, senderId);
+            const reply = await getAIReply(prompt, senderId, detectedLang);
             addToHistory(senderId, 'assistant', reply);
             await sendFacebookMessage(senderId, reply);
             continue;
         }
 
-        // ===== RÉSUMÉ =====
+        // ===== RÉSUMÉ - CHECK LANGUAGE SUPPORT =====
         if (textLower.startsWith('résumé ') || textLower.startsWith('resume ') || textLower.startsWith('summarize ') || textLower.startsWith('summary ')) {
+            if (!isSupportedTeachingLanguage(detectedLang)) {
+                await handleNonSupportedLanguage(senderId, detectedLang);
+                continue;
+            }
             const txt = text.substring(text.indexOf(' ') + 1).trim();
             if (txt.length < 30) {
                 await sendFacebookMessage(senderId, "📄 Veuillez coller le texte à résumer.\nEx: RÉSUMÉ [texte long...]");
@@ -408,14 +461,18 @@ app.post('/webhook', async (req, res) => {
             await sendTyping(senderId);
             const prompt = `Fais un résumé clair et concis de ce texte : "${txt}"`;
             addToHistory(senderId, 'user', prompt);
-            const reply = await getAIReply(prompt, senderId);
+            const reply = await getAIReply(prompt, senderId, detectedLang);
             addToHistory(senderId, 'assistant', reply);
             await sendFacebookMessage(senderId, reply);
             continue;
         }
 
-        // ===== CONJUGAISON =====
+        // ===== CONJUGAISON - CHECK LANGUAGE SUPPORT =====
         if (textLower.startsWith('conjugue ') || textLower.startsWith('conjugate ')) {
+            if (!isSupportedTeachingLanguage(detectedLang)) {
+                await handleNonSupportedLanguage(senderId, detectedLang);
+                continue;
+            }
             const verbe = text.substring(text.indexOf(' ') + 1).trim();
             if (!verbe) {
                 await sendFacebookMessage(senderId, "📝 Précisez le verbe.\nEx: CONJUGUE être");
@@ -424,7 +481,7 @@ app.post('/webhook', async (req, res) => {
             await sendTyping(senderId);
             const prompt = `Conjugue le verbe "${verbe}" à tous les temps principaux.`;
             addToHistory(senderId, 'user', prompt);
-            const reply = await getAIReply(prompt, senderId);
+            const reply = await getAIReply(prompt, senderId, detectedLang);
             addToHistory(senderId, 'assistant', reply);
             await sendFacebookMessage(senderId, reply);
             continue;
@@ -446,14 +503,14 @@ app.post('/webhook', async (req, res) => {
         // ===== AI REPLY (MULTILINGUE DIRECT) =====
         await sendTyping(senderId);
         addToHistory(senderId, 'user', text);
-        const aiReply = await getAIReply(text, senderId);
+        const aiReply = await getAIReply(text, senderId, detectedLang);
         addToHistory(senderId, 'assistant', aiReply);
         await sendFacebookMessage(senderId, aiReply);
     }
 });
 
 // ========== AI REPLY (MULTILINGUE) WITH RETRY LOGIC ==========
-async function getAIReply(userMessage, senderId, retries = 3) {
+async function getAIReply(userMessage, senderId, detectedLang, retries = 3) {
     try {
         const history = getHistory(senderId);
         const systemPrompt = `Vous êtes l'assistant IA officiel de la page "Ofisialy Sylvain", créée par Sylvain Solofoniaina le 01 Mai 2026.
@@ -463,12 +520,14 @@ async function getAIReply(userMessage, senderId, retries = 3) {
 🌐 LANGUES : Vous comprenez et parlez TOUTES les langues. Répondez TOUJOURS dans LA MÊME LANGUE que l'utilisateur, quelle qu'elle soit.
 
 ⚠️ IMPORTANT : Si l'utilisateur écrit dans une langue autre que le Français ou l'Anglais, répondez dans sa langue mais rappelez poliment que :
-- Vos COMPÉTENCES D'ENSEIGNEMENT sont spécialisées en FRANÇAIS et ANGLAIS.
-- Vous pouvez néanmoins DISCUTER et RÉPONDRE À TOUTES LES QUESTIONS dans toutes les langues.
-- Proposez de passer en Français ou Anglais pour les exercices et quiz.
+1. Vos COMPÉTENCES D'ENSEIGNEMENT sont spécialisées en FRANÇAIS et ANGLAIS UNIQUEMENT.
+2. Vous pouvez discuter et répondre à TOUTES LES QUESTIONS dans toutes les langues.
+3. Pour les EXERCICES, QUIZ, GRAMMAIRE et VOCABULAIRE : vous insistez pour switcher à Français ou Anglais.
+4. NE DONNEZ PAS de leçon de grammaire ou vocabulaire dans une autre langue.
+5. Proposez poliment de passer à Français ou Anglais pour apprendre.
 
 📋 COMPÉTENCES :
-- Grammaire, conjugaison, orthographe, vocabulaire
+- Grammaire, conjugaison, orthographe, vocabulaire (FRANÇAIS & ANGLAIS UNIQUEMENT)
 - Synonymes, antonymes, homophones
 - Compréhension de texte, résumé, analyse
 - Rédaction : lettre, CV, email, dissertation
@@ -514,9 +573,9 @@ async function getAIReply(userMessage, senderId, retries = 3) {
                 );
                 return response.data.choices[0].message.content;
             } catch (error) {
-                if (attempt === retries - 1) throw error; // Rethrow on last attempt
+                if (attempt === retries - 1) throw error;
                 console.warn(`⚠️ AI request attempt ${attempt + 1} failed, retrying...`);
-                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait before retrying
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
     } catch (error) {

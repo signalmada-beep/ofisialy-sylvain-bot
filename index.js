@@ -10,20 +10,18 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const AI_MODEL = "mistralai/mistral-7b-instruct:free";
 
-// Webhook verification GET
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
     
     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-        console.log('✅ Webhook verified');
+        console.log('Webhook verified');
         return res.status(200).send(challenge);
     }
     res.sendStatus(403);
 });
 
-// Receive messages POST
 app.post('/webhook', async (req, res) => {
     const body = req.body;
     if (body.object === 'page') {
@@ -51,7 +49,7 @@ async function getAIReply(userMessage) {
                 messages: [
                     {
                         role: 'system',
-                        content: "Tu es l'assistant officiel de 'Ofisialy Sylvain', une page dédiée à la formation et à l'enseignement. Tu réponds en français ou en anglais selon la langue de la personne. Ton ton est amical, bienveillant et motivant. Tu utilises des emojis avec modération."
+                        content: "Tu es l'assistant officiel de 'Ofisialy Sylvain', une page dediee a la formation et a l'enseignement. Tu reponds en francais ou en anglais selon la langue de la personne. Ton ton est amical, bienveillant et motivant."
                     },
                     { role: 'user', content: userMessage }
                 ]
@@ -66,7 +64,7 @@ async function getAIReply(userMessage) {
         return response.data.choices[0].message.content;
     } catch (error) {
         console.error('OpenRouter error:', error.message);
-        return "Désolé, une erreur s'est produite. Réessaie plus tard. 🙏";
+        return "Desole, une erreur s'est produite. Reessaie plus tard.";
     }
 }
 
@@ -82,4 +80,4 @@ async function sendFacebookMessage(recipientId, text) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Bot running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Bot running on port ${PORT}`));

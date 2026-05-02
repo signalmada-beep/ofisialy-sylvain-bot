@@ -5,59 +5,64 @@ const axios = require('axios');
 const app = express();
 app.use(express.json());
 
-// ========== SECURITY FIX: Require environment variables ==========
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-if (!VERIFY_TOKEN) throw new Error('VERIFY_TOKEN environment variable is required');
-
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "ofisialysylvain-2024";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-if (!PAGE_ACCESS_TOKEN) throw new Error('PAGE_ACCESS_TOKEN environment variable is required');
-
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY environment variable is required');
-
 const AI_MODEL = "openai/gpt-oss-120b:free";
+
+// ========== API KEY ROTATION ==========
+const DEFAULT_API_KEYS = [];
+
+const API_KEYS = (process.env.OPENROUTER_API_KEY || DEFAULT_API_KEYS.join(',')).split(',').map(k => k.trim()).filter(Boolean);
+let currentKeyIndex = 0;
+
+function getApiKey() {
+    return API_KEYS[currentKeyIndex] || API_KEYS[0];
+}
+
+function getNextApiKey() {
+    if (API_KEYS.length <= 1) return getApiKey();
+    currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
+    console.log(`🔄 API Key → #${currentKeyIndex + 1}/${API_KEYS.length}`);
+    return getApiKey();
+}
+
+function hasNextKey() {
+    return currentKeyIndex < API_KEYS.length - 1;
+}
 
 // ========== QUOTAS ==========
 const userQuotas = {};
-const userLanguageCache = {}; // OPTIMIZATION: Cache language detection
 const TEST_MODE_LIMIT = 20;
 const DAILY_LIMIT = 10;
 const dailyReset = {};
 
 function checkQuota(senderId) {
     const today = new Date().toDateString();
-    
-    // FIX: Properly reset quota at start of day
     if (dailyReset[senderId] !== today) {
         dailyReset[senderId] = today;
-        if (userQuotas[senderId]) {
-            userQuotas[senderId] = { mode: 'test', count: 0 };
+        if (userQuotas[senderId]?.mode === 'daily') {
+            userQuotas[senderId].count = 0;
         }
     }
-    
     if (!userQuotas[senderId]) {
         userQuotas[senderId] = { mode: 'test', count: 1 };
         return { allowed: true, mode: 'test', remaining: TEST_MODE_LIMIT - 1 };
     }
-    
     const quota = userQuotas[senderId];
-    
     if (quota.mode === 'test') {
         quota.count++;
-        if (quota.count >= TEST_MODE_LIMIT) {
+        if (quota.count > TEST_MODE_LIMIT) {
             quota.mode = 'daily';
             quota.count = 1;
             return { allowed: true, mode: 'daily', remaining: DAILY_LIMIT - 1 };
         }
         return { allowed: true, mode: 'test', remaining: TEST_MODE_LIMIT - quota.count };
     }
-    
     if (quota.mode === 'daily') {
         quota.count++;
         if (quota.count > DAILY_LIMIT) return { allowed: false, mode: 'daily', remaining: 0 };
         return { allowed: true, mode: 'daily', remaining: DAILY_LIMIT - quota.count };
     }
-    
     return { allowed: false, mode: 'unknown', remaining: 0 };
 }
 
@@ -68,8 +73,6 @@ const MAX_HISTORY = 10;
 function addToHistory(senderId, role, content) {
     if (!conversationHistory[senderId]) conversationHistory[senderId] = [];
     conversationHistory[senderId].push({ role, content });
-    
-    // FIX: Improved cleanup
     if (conversationHistory[senderId].length > MAX_HISTORY * 2) {
         conversationHistory[senderId] = conversationHistory[senderId].slice(-MAX_HISTORY * 2);
     }
@@ -320,12 +323,8 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // ===== DETECTION LANGUE (WITH CACHE) =====
-        let detectedLang = userLanguageCache[senderId];
-        if (!detectedLang) {
-            detectedLang = detectLanguage(text);
-            userLanguageCache[senderId] = detectedLang;
-        }
+        // ===== DETECTION LANGUE =====
+        const detectedLang = detectLanguage(text);
         adminStats.languagesDetected[detectedLang] = (adminStats.languagesDetected[detectedLang] || 0) + 1;
 
         // ===== MENU / AIDE =====
@@ -446,11 +445,10 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// ========== AI REPLY (MULTILINGUE) WITH RETRY LOGIC ==========
-async function getAIReply(userMessage, senderId, retries = 3) {
-    try {
-        const history = getHistory(senderId);
-        const systemPrompt = `Vous êtes l'assistant IA officiel de la page "Ofisialy Sylvain", créée par Sylvain Solofoniaina le 01 Mai 2026.
+// ========== AI REPLY WITH API KEY ROTATION ==========
+async function getAIReply(userMessage, senderId) {
+    const history = getHistory(senderId);
+    const systemPrompt = `Vous êtes l'assistant IA officiel de la page "Ofisialy Sylvain", créée par Sylvain Solofoniaina le 01 Mai 2026.
 
 🎯 RÔLE : Assistant pédagogique expert en FRANÇAIS et ANGLAIS.
 
@@ -461,7 +459,6 @@ async function getAIReply(userMessage, senderId, retries = 3) {
 2. Expliquez clairement que vos COMPÉTENCES D'ENSEIGNEMENT sont UNIQUEMENT en FRANÇAIS et ANGLAIS.
 3. Proposez-lui de passer en Français ou en Anglais pour apprendre.
 4. NE DONNEZ PAS de leçon de grammaire ou de vocabulaire dans une autre langue.
-5. Exemple en coréen : "안녕하세요! 저는 프랑스어와 영어만 가르칠 수 있습니다. 프랑스어나 영어로 질문해 주시면 기꺼이 도와드리겠습니다! 🙏"
 
 📋 COMPÉTENCES (Français & Anglais uniquement) :
 - Grammaire, conjugaison, orthographe, vocabulaire
@@ -470,58 +467,72 @@ async function getAIReply(userMessage, senderId, retries = 3) {
 - Rédaction : lettre, CV, email, dissertation
 - Préparation examens (BAC, TOEFL, IELTS, DELF)
 - Exercices pratiques et corrections détaillées
-- Figures de style, littérature, auteurs
-- Expressions idiomatiques, proverbes
 
 📋 RÈGLES :
 - Vouvoyez en français, soyez poli dans toutes les langues.
 - PAS de Markdown. Utilisez des MAJUSCULES pour les titres.
 - Émojis avec modération.
 - Réponses courtes et claires (max 300 mots).
-- Proposez toujours une action ou un exercice.
 - Encouragez l'apprenant.
 
-🚫 LIMITES : Pas d'images, fichiers, vidéos, audio.
-📞 Contact Sylvain : via la page Facebook.`;
+🚫 LIMITES : Pas d'images, fichiers, vidéos, audio.`;
 
-        for (let attempt = 0; attempt < retries; attempt++) {
-            try {
-                const response = await axios.post(
-                    'https://openrouter.ai/api/v1/chat/completions',
-                    {
-                        model: AI_MODEL,
-                        max_tokens: 500,
-                        temperature: 0.6,
-                        messages: [
-                            { role: 'system', content: systemPrompt },
-                            ...history.slice(-8),
-                            { role: 'user', content: userMessage }
-                        ]
+    let lastError = null;
+
+    // Andramo @clé tsirairay
+    for (let attempt = 0; attempt < API_KEYS.length; attempt++) {
+        try {
+            const response = await axios.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                    model: AI_MODEL,
+                    max_tokens: 500,
+                    temperature: 0.6,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        ...history.slice(-8),
+                        { role: 'user', content: userMessage }
+                    ]
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${getApiKey()}`,
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': 'https://ofisialysylvain.com',
+                        'X-Title': 'Ofisialy Sylvain Bot'
                     },
-                    {
-                        headers: {
-                            'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-                            'Content-Type': 'application/json',
-                            'HTTP-Referer': 'https://ofisialysylvain.com',
-                            'X-Title': 'Ofisialy Sylvain Bot'
-                        },
-                        timeout: 30000
-                    }
-                );
-                return response.data.choices[0].message.content;
-            } catch (error) {
-                if (attempt === retries - 1) throw error;
-                console.warn(`⚠️ AI request attempt ${attempt + 1} failed, retrying...`);
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                    timeout: 30000
+                }
+            );
+            console.log(`✅ AI Reply (Key #${currentKeyIndex + 1})`);
+            return response.data.choices[0].message.content;
+            
+        } catch (error) {
+            lastError = error;
+            console.warn(`⚠️ Key #${currentKeyIndex + 1} failed: ${error.response?.status || error.code}`);
+            
+            // Raha 402 na 429 → mifindra clé manaraka
+            if (error.response?.status === 402 || error.response?.status === 429) {
+                if (hasNextKey()) {
+                    getNextApiKey();
+                    continue; // Andramo @clé manaraka
+                }
             }
+            
+            // Raha timeout → andramo @clé manaraka ihany
+            if (error.code === 'ECONNABORTED' && hasNextKey()) {
+                getNextApiKey();
+                continue;
+            }
+            
+            // Raha tsy misy clé intsony → mivoaka
+            break;
         }
-    } catch (error) {
-        console.error('❌ AI Error:', error.message);
-        if (error.response?.status === 402) return "🔧 Maintenance en cours. Revenez dans quelques heures. 🙏";
-        if (error.response?.status === 429) return "⏳ Trop de demandes. Réessayez dans quelques minutes. 🙏";
-        if (error.code === 'ECONNABORTED') return "⏳ Délai dépassé. Reformulez plus brièvement.";
-        return "🔧 Erreur temporaire. Veuillez réessayer. 🙏";
     }
+
+    // Rehefa lany daholo
+    console.error('❌ All API keys exhausted:', lastError?.message);
+    return "🔧 Maintenance en cours. Merci de réessayer dans quelques instants. 🙏";
 }
 
 // ========== SEND MESSAGE ==========

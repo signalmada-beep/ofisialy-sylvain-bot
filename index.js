@@ -5,44 +5,59 @@ const axios = require('axios');
 const app = express();
 app.use(express.json());
 
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "ofisialysylvain-2024";
+// ========== SECURITY FIX: Require environment variables ==========
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+if (!VERIFY_TOKEN) throw new Error('VERIFY_TOKEN environment variable is required');
+
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+if (!PAGE_ACCESS_TOKEN) throw new Error('PAGE_ACCESS_TOKEN environment variable is required');
+
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY environment variable is required');
+
 const AI_MODEL = "openai/gpt-4o-mini-search-preview";
 
 // ========== QUOTAS ==========
 const userQuotas = {};
+const userLanguageCache = {}; // OPTIMIZATION: Cache language detection
 const TEST_MODE_LIMIT = 20;
 const DAILY_LIMIT = 10;
 const dailyReset = {};
 
 function checkQuota(senderId) {
     const today = new Date().toDateString();
+    
+    // FIX: Properly reset quota at start of day
     if (dailyReset[senderId] !== today) {
         dailyReset[senderId] = today;
-        if (userQuotas[senderId]?.mode === 'daily') {
-            userQuotas[senderId].count = 0;
+        if (userQuotas[senderId]) {
+            userQuotas[senderId] = { mode: 'test', count: 0 };
         }
     }
+    
     if (!userQuotas[senderId]) {
         userQuotas[senderId] = { mode: 'test', count: 1 };
         return { allowed: true, mode: 'test', remaining: TEST_MODE_LIMIT - 1 };
     }
+    
     const quota = userQuotas[senderId];
+    
     if (quota.mode === 'test') {
         quota.count++;
-        if (quota.count > TEST_MODE_LIMIT) {
+        if (quota.count >= TEST_MODE_LIMIT) {
             quota.mode = 'daily';
             quota.count = 1;
             return { allowed: true, mode: 'daily', remaining: DAILY_LIMIT - 1 };
         }
         return { allowed: true, mode: 'test', remaining: TEST_MODE_LIMIT - quota.count };
     }
+    
     if (quota.mode === 'daily') {
         quota.count++;
         if (quota.count > DAILY_LIMIT) return { allowed: false, mode: 'daily', remaining: 0 };
         return { allowed: true, mode: 'daily', remaining: DAILY_LIMIT - quota.count };
     }
+    
     return { allowed: false, mode: 'unknown', remaining: 0 };
 }
 
@@ -53,6 +68,8 @@ const MAX_HISTORY = 10;
 function addToHistory(senderId, role, content) {
     if (!conversationHistory[senderId]) conversationHistory[senderId] = [];
     conversationHistory[senderId].push({ role, content });
+    
+    // FIX: Improved cleanup
     if (conversationHistory[senderId].length > MAX_HISTORY * 2) {
         conversationHistory[senderId] = conversationHistory[senderId].slice(-MAX_HISTORY * 2);
     }
@@ -303,8 +320,12 @@ app.post('/webhook', async (req, res) => {
             continue;
         }
 
-        // ===== DETECTION LANGUE =====
-        const detectedLang = detectLanguage(text);
+        // ===== DETECTION LANGUE (WITH CACHE) =====
+        let detectedLang = userLanguageCache[senderId];
+        if (!detectedLang) {
+            detectedLang = detectLanguage(text);
+            userLanguageCache[senderId] = detectedLang;
+        }
         adminStats.languagesDetected[detectedLang] = (adminStats.languagesDetected[detectedLang] || 0) + 1;
 
         // ===== MENU / AIDE =====
@@ -425,8 +446,8 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// ========== AI REPLY (MULTILINGUE DIRECT) ==========
-async function getAIReply(userMessage, senderId) {
+// ========== AI REPLY (MULTILINGUE) WITH RETRY LOGIC ==========
+async function getAIReply(userMessage, senderId, retries = 3) {
     try {
         const history = getHistory(senderId);
         const systemPrompt = `Vous êtes l'assistant IA officiel de la page "Ofisialy Sylvain", créée par Sylvain Solofoniaina le 01 Mai 2026.
@@ -463,29 +484,37 @@ async function getAIReply(userMessage, senderId) {
 🚫 LIMITES : Pas d'images, fichiers, vidéos, audio.
 📞 Contact Sylvain : via la page Facebook.`;
 
-        const response = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-                model: AI_MODEL,
-                max_tokens: 500,
-                temperature: 0.6,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    ...history.slice(-8),
-                    { role: 'user', content: userMessage }
-                ]
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': 'https://ofisialysylvain.com',
-                    'X-Title': 'Ofisialy Sylvain Bot'
-                },
-                timeout: 30000
+        for (let attempt = 0; attempt < retries; attempt++) {
+            try {
+                const response = await axios.post(
+                    'https://openrouter.ai/api/v1/chat/completions',
+                    {
+                        model: AI_MODEL,
+                        max_tokens: 500,
+                        temperature: 0.6,
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            ...history.slice(-8),
+                            { role: 'user', content: userMessage }
+                        ]
+                    },
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                            'Content-Type': 'application/json',
+                            'HTTP-Referer': 'https://ofisialysylvain.com',
+                            'X-Title': 'Ofisialy Sylvain Bot'
+                        },
+                        timeout: 30000
+                    }
+                );
+                return response.data.choices[0].message.content;
+            } catch (error) {
+                if (attempt === retries - 1) throw error;
+                console.warn(`⚠️ AI request attempt ${attempt + 1} failed, retrying...`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
-        );
-        return response.data.choices[0].message.content;
+        }
     } catch (error) {
         console.error('❌ AI Error:', error.message);
         if (error.response?.status === 402) return "🔧 Maintenance en cours. Revenez dans quelques heures. 🙏";

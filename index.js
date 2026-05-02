@@ -15,7 +15,7 @@ if (!PAGE_ACCESS_TOKEN) throw new Error('PAGE_ACCESS_TOKEN environment variable 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY environment variable is required');
 
-const AI_MODEL = "anthropic/claude-3-haiku";
+const AI_MODEL = "openai/gpt-oss-120b:free";
 
 // ========== QUOTAS ==========
 const userQuotas = {};

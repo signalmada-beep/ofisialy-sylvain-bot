@@ -365,7 +365,8 @@ app.post('/webhook', async (req, res) => {
     if (body.object !== 'page') return res.sendStatus(404);
 
     res.status(200).send('EVENT_RECEIVED');
-
+    console.log('📨 Webhook request received:', JSON.stringify(body.entry[0]).substring(0, 200));
+    
     // ===== GÉRER LES CHANGES (feed + group_feed) =====
     if (body.entry[0]?.changes) {
         for (const change of body.entry[0].changes) {

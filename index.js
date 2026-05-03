@@ -154,6 +154,7 @@ async function replyToComment(commentId, message) {
         });
     }
 }
+
 async function sendFacebookMessage(recipientId, text) {
     try {
         const response = await axios.post(
@@ -216,135 +217,141 @@ app.get('/webhook', (req, res) => {
     res.sendStatus(403);
 });
 
-// ========== WEBHOOK POST (MITAMBATRA) ==========
+// ========== WEBHOOK POST ==========
 app.post('/webhook', async (req, res) => {
-    const body = req.body;
+    try {
+        const body = req.body;
 
-    // Réponse rapide obligatoire
-    res.status(200).send('EVENT_RECEIVED');
+        // Réponse rapide obligatoire
+        res.status(200).send('EVENT_RECEIVED');
 
-   if (body.object !== 'page') {
-    console.log('⚠️ Not a page event, ignoring');
-    return;
-}
-console.log('📨 FULL BODY KEYS:', Object.keys(body));
-console.log('📨 ENTRY KEYS:', Object.keys(body.entry[0] || {}));
+        if (body.object !== 'page') {
+            console.log('⚠️ Not a page event, ignoring');
+            return;
+        }
+        console.log('📨 FULL BODY KEYS:', Object.keys(body));
+        console.log('📨 ENTRY KEYS:', Object.keys(body.entry[0] || {}));
 
-    for (const entry of body.entry) {
+        for (const entry of body.entry) {
 
-        // ================= COMMENTS (CHANGES) =================
-        console.log('📨 ENTRY:', JSON.stringify(entry).substring(0, 500));
-        if (entry.changes) {
-            for (const change of entry.changes) {
-                console.log('📦 CHANGE FULL:', JSON.stringify(change, null, 2));
+            // ================= COMMENTS (CHANGES) =================
+            console.log('📨 ENTRY:', JSON.stringify(entry).substring(0, 500));
+            if (entry.changes) {
+                for (const change of entry.changes) {
+                    console.log('📦 CHANGE FULL:', JSON.stringify(change, null, 2));
 
-                // ===== PAGE COMMENTS =====
-                if (change.field === 'feed' && change.value?.item === 'comment') {
-                    const commentId = change.value.comment_id;
-                    const senderId = change.value.from?.id;
-                    const senderName = change.value.from?.name || '';
-                    const message = change.value.message || '';
+                    // ===== PAGE COMMENTS =====
+                    if (change.field === 'feed' && change.value?.item === 'comment') {
+                        const commentId = change.value.comment_id;
+                        const senderId = change.value.from?.id;
+                        const senderName = change.value.from?.name || '';
+                        const message = change.value.message || '';
 
-                    if (!commentId || !senderId) continue;
-                    if (ADMIN_IDS.includes(senderId) || senderId === PAGE_ID) {
-                        console.log('⏭️ Ignored admin/self');
+                        if (!commentId || !senderId) continue;
+                        if (ADMIN_IDS.includes(senderId) || senderId === PAGE_ID) {
+                            console.log('⏭️ Ignored admin/self');
+                            continue;
+                        }
+
+                        console.log(`💬 PAGE COMMENT: ${senderName} → ${message}`);
+                        adminStats.commentsReplied++;
+
+                        try {
+                            const reply = `Merci ${senderName} pour votre commentaire ! 🙌\n\nDécouvrez notre assistant gratuit ici 👉 m.me/OfisialySylvain`;
+                            await replyToComment(commentId, reply);
+                        } catch (err) {
+                            console.error('❌ Error comment:', err.message);
+                        }
+                    }
+
+                    // ===== GROUP COMMENTS =====
+                    if (change.field === 'group_feed' && change.value?.item === 'comment') {
+                        const commentId = change.value.comment_id;
+                        const senderId = change.value.from?.id;
+                        const senderName = change.value.from?.name || '';
+                        const message = change.value.message || '';
+
+                        if (!commentId || !senderId) continue;
+
+                        console.log(`👥 GROUP COMMENT: ${senderName} → ${message}`);
+                        adminStats.commentsReplied++;
+
+                        try {
+                            await replyToComment(commentId, `Merci ${senderName} pour votre participation ! 🎓\n\nRejoignez-nous aussi sur Messenger 👉 m.me/OfisialySylvain`);
+                        } catch (err) {
+                            console.error('❌ Error group:', err.message);
+                        }
+                    }
+                }
+            }
+
+            // ================= MESSENGER =================
+            if (entry.messaging) {
+                for (const event of entry.messaging) {
+                    const senderId = event.sender?.id;
+                    const text = event.message?.text;
+                    const attachments = event.message?.attachments;
+
+                    if (!senderId) continue;
+
+                    adminStats.totalMessages++;
+                    adminStats.totalUsers.add(senderId);
+
+                    // Pièces jointes
+                    if (attachments?.length > 0) {
+                        const type = attachments[0].type;
+                        const replies = {
+                            image: "📷 Image reçue — Je ne peux pas voir les images. Décris-moi par écrit ! 😊",
+                            audio: "🎤 Vocal reçu — Je ne peux pas l'écouter. Écris-moi ! ✍️",
+                            video: "🎬 Vidéo reçue — Je ne peux pas la regarder. Décris-moi ! 📝",
+                            file: "📁 Fichier reçu — Je ne peux pas l'ouvrir. Copie-colle le contenu ! 📋",
+                            sticker: "😄 Joli ! Une question ? Écris-moi. 🎓",
+                        };
+                        await sendFacebookMessage(senderId, replies[type] || replies.file);
                         continue;
                     }
 
-                    console.log(`💬 PAGE COMMENT: ${senderName} → ${message}`);
-                    adminStats.commentsReplied++;
+                    if (!text || event.message?.is_echo) continue;
 
-                    try {
-                        const reply = `Merci ${senderName} pour votre commentaire ! 🙌\n\nDécouvrez notre assistant gratuit ici 👉 m.me/OfisialySylvain`;
-                        await replyToComment(commentId, reply);
-                    } catch (err) {
-                        console.error('❌ Error comment:', err.message);
+                    const textLower = text.toLowerCase();
+                    console.log(`📩 MSG [${senderId.slice(-4)}]: ${text.substring(0, 60)}`);
+
+                    // Commande ADMIN
+                    if (ADMIN_IDS.includes(senderId) && textLower.startsWith('admin')) {
+                        const uptime = Math.floor((Date.now() - adminStats.startTime) / 60000);
+                        const statsMsg = `📊 STATS ADMIN\n\n👥 Users: ${adminStats.totalUsers.size}\n💬 Messages: ${adminStats.totalMessages}\n💬 Comments: ${adminStats.commentsReplied}\n📢 Follows: ${adminStats.followRequests}\n⏱️ Uptime: ${uptime} min\n\n🌐 Langues:\n${Object.entries(adminStats.languagesDetected).map(([k, v]) => `- ${k}: ${v}`).join('\n')}`;
+                        await sendFacebookMessage(senderId, statsMsg);
+                        continue;
                     }
-                }
 
-                // ===== GROUP COMMENTS =====
-                if (change.field === 'group_feed' && change.value?.item === 'comment') {
-                    const commentId = change.value.comment_id;
-                    const senderId = change.value.from?.id;
-                    const senderName = change.value.from?.name || '';
-                    const message = change.value.message || '';
-
-                    if (!commentId || !senderId) continue;
-
-                    console.log(`👥 GROUP COMMENT: ${senderName} → ${message}`);
-                    adminStats.commentsReplied++;
-
-                    try {
-                        await replyToComment(commentId, `Merci ${senderName} pour votre participation ! 🎓\n\nRejoignez-nous aussi sur Messenger 👉 m.me/OfisialySylvain`);
-                    } catch (err) {
-                        console.error('❌ Error group:', err.message);
+                    // Première interaction
+                    if (!conversationHistory[senderId] || conversationHistory[senderId].length === 0) {
+                        const welcomeMsg = `🎉 *Bienvenue sur Ofisialy Sylvain !*\n\n📌 *Abonnez-vous* pour recevoir nos conseils gratuits chaque jour.\n👍 *Likez, commentez, partagez* — votre soutien compte ! 🚀\n\nPosez votre question en Français ou en Anglais !`;
+                        await sendFacebookMessage(senderId, welcomeMsg);
+                        adminStats.followRequests++;
+                        addToHistory(senderId, 'assistant', welcomeMsg);
                     }
+
+                    // Quota
+                    const quota = checkQuota(senderId);
+                    if (!quota.allowed) {
+                        await sendFacebookMessage(senderId, `⚠️ Limite quotidienne atteinte (${DAILY_LIMIT} messages/jour).\n\n🔄 Revenez demain !\n📌 Abonnez-vous à la page. 😊`);
+                        continue;
+                    }
+
+                    // AI Reply
+                    await sendTyping(senderId);
+                    addToHistory(senderId, 'user', text);
+                    const aiReply = await getAIReply(text, senderId);
+                    addToHistory(senderId, 'assistant', aiReply);
+                    await sendFacebookMessage(senderId, aiReply);
                 }
             }
-        }
-
-        // ================= MESSENGER =================
-        if (entry.messaging) {
-            for (const event of entry.messaging) {
-                const senderId = event.sender?.id;
-                const text = event.message?.text;
-                const attachments = event.message?.attachments;
-
-                if (!senderId) continue;
-
-                adminStats.totalMessages++;
-                adminStats.totalUsers.add(senderId);
-
-                // Pièces jointes
-                if (attachments?.length > 0) {
-                    const type = attachments[0].type;
-                    const replies = {
-                        image: "📷 Image reçue — Je ne peux pas voir les images. Décris-moi par écrit ! 😊",
-                        audio: "🎤 Vocal reçu — Je ne peux pas l'écouter. Écris-moi ! ✍️",
-                        video: "🎬 Vidéo reçue — Je ne peux pas la regarder. Décris-moi ! 📝",
-                        file: "📁 Fichier reçu — Je ne peux pas l'ouvrir. Copie-colle le contenu ! 📋",
-                        sticker: "😄 Joli ! Une question ? Écris-moi. 🎓",
-                    };
-                    await sendFacebookMessage(senderId, replies[type] || replies.file);
-                    continue;
-                }
-
-                if (!text || event.message?.is_echo) continue;
-
-                const textLower = text.toLowerCase();
-                console.log(`📩 MSG [${senderId.slice(-4)}]: ${text.substring(0, 60)}`);
-
-                // Commande ADMIN
-                if (ADMIN_IDS.includes(senderId) && textLower.startsWith('admin')) {
-                    const uptime = Math.floor((Date.now() - adminStats.startTime) / 60000);
-                    const statsMsg = `📊 STATS ADMIN\n\n👥 Users: ${adminStats.totalUsers.size}\n💬 Messages: ${adminStats.totalMessages}\n💬 Comments: ${adminStats.commentsReplied}\n📢 Follows: ${adminStats.followRequests}\n⏱️ Uptime: ${uptime} min\n\n🌐 Langues:\n${Object.entries(adminStats.languagesDetected).map(([k, v]) => `- ${k}: ${v}`).join('\n')}`;
-                    await sendFacebookMessage(senderId, statsMsg);
-                    continue;
-                }
-
-                // Première interaction
-                if (!conversationHistory[senderId] || conversationHistory[senderId].length === 0) {
-                    const welcomeMsg = `🎉 *Bienvenue sur Ofisialy Sylvain !*\n\n📌 *Abonnez-vous* pour recevoir nos conseils gratuits chaque jour.\n👍 *Likez, commentez, partagez* — votre soutien compte ! 🚀\n\nPosez votre question en Français ou en Anglais !`;
-                    await sendFacebookMessage(senderId, welcomeMsg);
-                    adminStats.followRequests++;
-                    addToHistory(senderId, 'assistant', welcomeMsg);
-                }
-
-                // Quota
-                const quota = checkQuota(senderId);
-                if (!quota.allowed) {
-                    await sendFacebookMessage(senderId, `⚠️ Limite quotidienne atteinte (${DAILY_LIMIT} messages/jour).\n\n🔄 Revenez demain !\n📌 Abonnez-vous à la page. 😊`);
-                    continue;
-                }
-
-                // AI Reply
-                await sendTyping(senderId);
-                addToHistory(senderId, 'user', text);
-                const aiReply = await getAIReply(text, senderId);
-                addToHistory(senderId, 'assistant', aiReply);
-                await sendFacebookMessage(senderId, aiReply);
-            }
-        }
+        } // Fin du for entry
+    } catch (error) {
+        console.error('❌ FATAL ERROR:', error.message);
+        console.error('❌ STACK:', error.stack);
+        res.status(200).send('EVENT_RECEIVED');
     }
 });
 

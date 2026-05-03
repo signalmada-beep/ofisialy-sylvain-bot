@@ -141,25 +141,32 @@ async function sendTyping(senderId) {
 
 async function replyToComment(commentId, message) {
     try {
-        await axios.post(
+        const response = await axios.post(
             `https://graph.facebook.com/v19.0/${commentId}/comments`,
             { message, access_token: PAGE_ACCESS_TOKEN }
         );
-        console.log('✅ Comment replied');
+        console.log('✅ Comment replied:', response.data?.id);
     } catch (error) {
-        console.error('❌ Reply error:', error.response?.data || error.message);
+        console.error('❌ Reply error DETAILS:', {
+            status: error.response?.status,
+            data: error.response?.data,
+            message: error.message
+        });
     }
 }
-
 async function sendFacebookMessage(recipientId, text) {
     try {
-        await axios.post(
+        const response = await axios.post(
             `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
             { recipient: { id: recipientId }, message: { text } }
         );
-        console.log('✅ Sent');
+        console.log('✅ Sent:', response.data?.message_id);
     } catch (error) {
-        console.error('❌ Send error:', error.message);
+        console.error('❌ Send error DETAILS:', {
+            status: error.response?.status,
+            data: error.response?.data,
+            message: error.message
+        });
     }
 }
 
@@ -216,7 +223,12 @@ app.post('/webhook', async (req, res) => {
     // Réponse rapide obligatoire
     res.status(200).send('EVENT_RECEIVED');
 
-    if (body.object !== 'page') return;
+   if (body.object !== 'page') {
+    console.log('⚠️ Not a page event, ignoring');
+    return;
+}
+console.log('📨 FULL BODY KEYS:', Object.keys(body));
+console.log('📨 ENTRY KEYS:', Object.keys(body.entry[0] || {}));
 
     for (const entry of body.entry) {
 

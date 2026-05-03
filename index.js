@@ -217,30 +217,21 @@ app.get('/webhook', (req, res) => {
     res.sendStatus(403);
 });
 
-// ========== WEBHOOK POST ==========
+// ========== WEBHOOK POST (SANS FILTRE) ==========
 app.post('/webhook', async (req, res) => {
     try {
         const body = req.body;
-
-        // Réponse rapide obligatoire
         res.status(200).send('EVENT_RECEIVED');
 
-        if (body.object !== 'page') {
-            console.log('⚠️ Not a page event, ignoring');
-            return;
-        }
-        console.log('📨 FULL BODY KEYS:', Object.keys(body));
-        console.log('📨 ENTRY KEYS:', Object.keys(body.entry[0] || {}));
+        if (body.object !== 'page') return;
 
         for (const entry of body.entry) {
 
-            // ================= COMMENTS (CHANGES) =================
-            console.log('📨 ENTRY:', JSON.stringify(entry).substring(0, 500));
+            // ================= COMMENTS =================
             if (entry.changes) {
                 for (const change of entry.changes) {
-                    console.log('📦 CHANGE FULL:', JSON.stringify(change, null, 2));
 
-                    // ===== PAGE COMMENTS =====
+                    // PAGE COMMENTS — mamaly ny rehetra (afa-tsy ny page mihitsy)
                     if (change.field === 'feed' && change.value?.item === 'comment') {
                         const commentId = change.value.comment_id;
                         const senderId = change.value.from?.id;
@@ -248,10 +239,8 @@ app.post('/webhook', async (req, res) => {
                         const message = change.value.message || '';
 
                         if (!commentId || !senderId) continue;
-                        if (ADMIN_IDS.includes(senderId) || senderId === PAGE_ID) {
-                            console.log('⏭️ Ignored admin/self');
-                            continue;
-                        }
+                        // Aza mamaly ny page mihitsy (mba tsy hanao boucle)
+                        if (senderId === PAGE_ID) continue;
 
                         console.log(`💬 PAGE COMMENT: ${senderName} → ${message}`);
                         adminStats.commentsReplied++;
@@ -264,7 +253,7 @@ app.post('/webhook', async (req, res) => {
                         }
                     }
 
-                    // ===== GROUP COMMENTS =====
+                    // GROUP COMMENTS — mamaly ny rehetra
                     if (change.field === 'group_feed' && change.value?.item === 'comment') {
                         const commentId = change.value.comment_id;
                         const senderId = change.value.from?.id;
@@ -347,10 +336,9 @@ app.post('/webhook', async (req, res) => {
                     await sendFacebookMessage(senderId, aiReply);
                 }
             }
-        } // Fin du for entry
+        }
     } catch (error) {
         console.error('❌ FATAL ERROR:', error.message);
-        console.error('❌ STACK:', error.stack);
         res.status(200).send('EVENT_RECEIVED');
     }
 });

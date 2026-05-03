@@ -221,9 +221,10 @@ app.post('/webhook', async (req, res) => {
     for (const entry of body.entry) {
 
         // ================= COMMENTS (CHANGES) =================
+        console.log('📨 ENTRY:', JSON.stringify(entry).substring(0, 500));
         if (entry.changes) {
             for (const change of entry.changes) {
-                console.log('📦 CHANGE:', JSON.stringify(change).substring(0, 200));
+                console.log('📦 CHANGE FULL:', JSON.stringify(change, null, 2));
 
                 // ===== PAGE COMMENTS =====
                 if (change.field === 'feed' && change.value?.item === 'comment') {
